@@ -1,0 +1,30 @@
+# Web framework / server
+fastapi
+uvicorn[standard]
+python-multipart
+
+# Data models
+pydantic>=2
+
+# ML models (already trained - reused as-is)
+joblib
+scikit-learn
+pandas
+
+# Gmail OAuth + API
+google-auth
+google-auth-oauthlib
+google-api-python-client
+
+# Microsoft Graph OAuth
+msal
+
+# Threat intel feed refresh + geolocation
+requests
+
+# Session cookie signing
+itsdangerous
+
+# Attachment security scanning (Attachment Security Engine)
+# Gracefully degrades if unavailable - see backend/app/security/yara/scanner.py
+yara-python

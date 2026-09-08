@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="soc-dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ValorProtects</title>
+<link rel="stylesheet" href="/assets/styles.css" />
+</head>
+<body>
+
+<div class="app-shell">
+
+  <!-- ============ LEFT SIDEBAR ============ -->
+  <nav class="sidebar" aria-label="Primary navigation">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">&#9737;</span>
+      <span class="brand-name">ValorProtects</span>
+    </div>
+    <ul class="nav-list">
+      <li class="nav-item active" data-view="dashboard">Dashboard</li>
+      <li class="nav-item" data-view="inbox">Inbox</li>
+      <li class="nav-item" data-view="scans">Scans</li>
+      <li class="nav-item" data-view="intel">Threat Intelligence</li>
+      <li class="nav-item" data-view="cases">Cases</li>
+      <li class="nav-item" data-view="reports">Reports</li>
+      <li class="nav-item" data-view="custom-email">Custom Email</li>
+      <li class="nav-item" data-view="settings">Settings</li>
+    </ul>
+    <div class="sidebar-footer">
+      <span class="limitation-badge" title="In-memory demo storage; cleared on restart">DEMO MODE</span>
+    </div>
+  </nav>
+
+  <div class="main-column">
+
+    <!-- ============ TOP BAR ============ -->
+    <header class="topbar">
+      <div class="topbar-left">
+        <div class="provider-status" id="provider-status">
+          <span class="status-dot status-dot--off"></span>
+          <span id="provider-status-text">No mailbox connected</span>
+        </div>
+      </div>
+      <div class="topbar-right">
+        <div class="connect-buttons" id="connect-buttons">
+          <button class="btn btn-secondary" id="connect-google">Connect Gmail</button>
+          <button class="btn btn-secondary" id="connect-microsoft">Connect Microsoft</button>
+        </div>
+        <button class="btn btn-icon" id="refresh-btn" title="Refresh mailbox" aria-label="Refresh mailbox">&#8635;</button>
+        <button class="btn btn-secondary" id="logout-btn" hidden>Logout</button>
+      </div>
+    </header>
+
+    <!-- ============ TOAST / ERROR BANNER ============ -->
+    <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+    <!-- ============ VIEWS ============ -->
+    <main class="content">
+
+      <!-- ---------------- DASHBOARD / INBOX (shared view) ---------------- -->
+      <section class="view active" data-view-id="dashboard">
+        <section class="summary-cards" aria-label="Threat summary">
+          <div class="summary-card summary-card--safe">
+            <div class="summary-value" id="count-low">0</div>
+            <div class="summary-label">LOW / SAFE</div>
+          </div>
+          <div class="summary-card summary-card--medium">
+            <div class="summary-value" id="count-medium">0</div>
+            <div class="summary-label">MEDIUM / SUSPICIOUS</div>
+          </div>
+          <div class="summary-card summary-card--high">
+            <div class="summary-value" id="count-high">0</div>
+            <div class="summary-label">HIGH RISK</div>
+          </div>
+          <div class="summary-card summary-card--critical">
+            <div class="summary-value" id="count-critical">0</div>
+            <div class="summary-label">CRITICAL</div>
+          </div>
+        </section>
+
+        <section class="scan-controls" aria-label="Scan controls">
+          <div class="scan-controls-row">
+            <label for="page-size-select">Emails per page</label>
+            <select id="page-size-select">
+              <option value="5" selected>5</option>
+              <option value="10">10</option>
+              <option value="20">20</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+
+            <button class="btn btn-primary" id="scan-btn" disabled>Scan Inbox</button>
+
+            <div class="pagination" id="pagination">
+              <button class="btn btn-secondary" id="prev-page-btn" disabled>&larr; Previous</button>
+              <span id="page-indicator">Page 1</span>
+              <button class="btn btn-secondary" id="next-page-btn" disabled>Next &rarr;</button>
+            </div>
+          </div>
+
+          <div class="scan-progress" id="scan-progress" hidden>
+            <div class="progress-bar-track">
+              <div class="progress-bar-fill" id="progress-bar-fill"></div>
+            </div>
+            <span id="progress-text">Scanning 0 / 0</span>
+          </div>
+
+          <div class="scan-summary" id="scan-summary" hidden></div>
+        </section>
+
+        <section class="connect-prompt" id="connect-prompt">
+          <h3>No mailbox connected</h3>
+          <p>Connect Gmail or Microsoft above, or use <strong>Custom Email</strong> in the sidebar to
+             analyze a <code>.eml</code> file with no account connection required.</p>
+        </section>
+
+        <section class="email-table-wrap" aria-label="Scanned emails">
+          <table class="email-table" id="email-table">
+            <thead>
+              <tr>
+                <th scope="col">Sender</th>
+                <th scope="col">Subject</th>
+                <th scope="col">Date</th>
+                <th scope="col">Provider</th>
+                <th scope="col">Risk</th>
+                <th scope="col">Attachments</th>
+              </tr>
+            </thead>
+            <tbody id="email-table-body">
+              <tr class="empty-state-row">
+                <td colspan="6">
+                  <div class="empty-state">
+                    <p><strong>No emails loaded yet.</strong></p>
+                    <p>Connect a mailbox above to see your inbox.</p>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+      </section>
+
+      <!-- ---------------- SCANS ---------------- -->
+      <section class="view" data-view-id="scans">
+        <h2 class="view-title">Scans</h2>
+
+        <div class="panel">
+          <h3>Threat trend</h3>
+          <div id="trend-chart-wrap">
+            <p class="muted-note" id="trend-empty-note">No scan history yet in this session.</p>
+            <div class="trend-bars" id="trend-bars"></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>Previous high-risk emails <span class="panel-subtitle" id="history-count-label"></span></h3>
+          <div id="history-list"><p class="muted-note">No high-risk emails recorded yet.</p></div>
+        </div>
+
+        <div class="panel">
+          <h3>Recurring suspicious sources</h3>
+          <div id="bad-sources-list"><p class="muted-note">Not enough data yet.</p></div>
+        </div>
+      </section>
+
+      <!-- ---------------- THREAT INTELLIGENCE ---------------- -->
+      <section class="view" data-view-id="intel">
+        <h2 class="view-title">Threat Intelligence</h2>
+        <p class="muted-note">Local intelligence only - no personal API keys are used or required.</p>
+        <div class="intel-cards" id="intel-cards"></div>
+      </section>
+
+      <!-- ---------------- CASES ---------------- -->
+      <section class="view" data-view-id="cases">
+        <h2 class="view-title">Cases</h2>
+        <p class="muted-note">Suspicious messages grouped by sending domain from this session's scans.</p>
+        <div id="cases-list"><p class="muted-note">No cases yet - high-risk detections will appear here.</p></div>
+      </section>
+
+      <!-- ---------------- REPORTS ---------------- -->
+      <section class="view" data-view-id="reports">
+        <h2 class="view-title">Reports</h2>
+        <div class="panel" id="reports-summary"></div>
+      </section>
+
+      <!-- ---------------- CUSTOM EMAIL ---------------- -->
+      <section class="view" data-view-id="custom-email">
+        <h2 class="view-title">Custom Email</h2>
+        <p class="muted-note">Analyze up to 10 <code>.eml</code> files directly - no mailbox connection required. Useful for the original1.eml / pinterest1.eml / SCOPE newsletter regression tests.</p>
+
+        <div class="dropzone" id="dropzone">
+          <p><strong>Drag &amp; drop</strong> up to 10 <code>.eml</code> files here</p>
+          <p>or</p>
+          <button class="btn btn-secondary" id="browse-files-btn">Browse files</button>
+          <input type="file" id="eml-file-input" accept=".eml,.txt" multiple hidden />
+        </div>
+
+        <div id="selected-files-list"></div>
+
+        <button class="btn btn-primary" id="analyze-batch-btn" disabled>Analyze All</button>
+
+        <div class="scan-summary" id="batch-summary" hidden></div>
+
+        <section class="email-table-wrap" style="margin-top:16px;">
+          <table class="email-table" id="batch-table">
+            <thead>
+              <tr>
+                <th>File</th><th>Sender</th><th>Subject</th><th>Risk</th>
+              </tr>
+            </thead>
+            <tbody id="batch-table-body"></tbody>
+          </table>
+        </section>
+      </section>
+
+      <!-- ---------------- SETTINGS ---------------- -->
+      <section class="view" data-view-id="settings">
+        <h2 class="view-title">Settings</h2>
+
+        <div class="panel">
+          <h3>Appearance</h3>
+          <p class="muted-note">Choose Light, Dark, or match your system. All themes are audited for text/badge contrast.</p>
+          <div class="theme-grid">
+            <div class="theme-menu-group">
+              <div class="theme-menu-label">System</div>
+              <button class="theme-option" data-theme="system">Match System</button>
+            </div>
+            <div class="theme-menu-group">
+              <div class="theme-menu-label">Light</div>
+              <button class="theme-option" data-theme="professional-light">Professional Light</button>
+              <button class="theme-option" data-theme="azure-light">Azure Light</button>
+              <button class="theme-option" data-theme="neutral-light">Neutral Light</button>
+            </div>
+            <div class="theme-menu-group">
+              <div class="theme-menu-label">Dark</div>
+              <button class="theme-option" data-theme="soc-dark">SOC Dark</button>
+              <button class="theme-option" data-theme="midnight-blue">Midnight Blue</button>
+              <button class="theme-option" data-theme="graphite-dark">Graphite Dark</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>Accounts</h3>
+          <div id="settings-account-area"></div>
+        </div>
+
+        <div class="panel">
+          <h3>About</h3>
+          <p><strong>ValorProtects</strong> - AI-powered email threat detection, geolocation and forensic
+             intelligence platform. Version 1.0.0 (hackathon build).</p>
+          <p class="muted-note">Updates, Terms &amp; Conditions, organization/personal mail-action policies,
+             and YARA attachment scanning are documented as planned in PROJECT_CONTEXT.md but are not
+             implemented in this build - see the project docs for the current status of each.</p>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- ============ DETAIL PANEL (slide-over) ============ -->
+    <aside class="detail-panel" id="detail-panel" aria-hidden="true" aria-label="Email details">
+      <div class="detail-panel-header">
+        <h2 id="detail-subject">Email details</h2>
+        <button class="btn btn-icon" id="close-detail-btn" aria-label="Close details">&times;</button>
+      </div>
+      <div class="detail-panel-body" id="detail-panel-body">
+        <!-- populated by app.js -->
+      </div>
+    </aside>
+    <div class="detail-overlay" id="detail-overlay" hidden></div>
+
+  </div>
+</div>
+
+<script src="/assets/app.js"></script>
+</body>
+</html>
