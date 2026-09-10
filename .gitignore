@@ -5,3 +5,20 @@ __pycache__/
 credentials.json
 token.json
 .venv/
+
+# Local backups / temporary debugging files
+*.backup*
+*.before-claude-fix
+round3-backups/
+
+# Runtime/debug logs
+*.log
+
+# Python test/cache files
+.pytest_cache/
+__pycache__/
+
+# Local runtime databases
+*.db
+*.sqlite
+*.sqlite3

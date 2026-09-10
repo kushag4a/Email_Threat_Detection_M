@@ -237,6 +237,7 @@
     el["prev-page-btn"].disabled = true;
     el["next-page-btn"].disabled = true;
 
+    closeDetailPanel();
     renderTable([]);
     updateSummaryCards();
     renderConnectionStatus();
@@ -323,14 +324,30 @@
   el["scan-btn"].addEventListener("click", async () => {
     if (!state.provider) return;
 
+    // BUG FIX (page-scoped scan bug - see DIAGNOSTIC_EVIDENCE.md): this
+    // used to send only `count=${state.pageSize}`, so the backend had
+    // no idea which page was on screen and always re-derived "the
+    // first N messages in the mailbox" from scratch - scanning page 1
+    // again even while the user was looking at page 2 or 3. Send the
+    // exact message IDs this page is currently displaying instead
+    // (the same IDs /api/emails just returned for this page), so the
+    // backend can never scan anything other than what's on screen.
+    if (!state.currentMessageIds.length) {
+      showToast("No messages loaded on this page to scan.", "error");
+      return;
+    }
+
     el["scan-btn"].disabled = true;
     el["scan-progress"].hidden = false;
     el["scan-summary"].hidden = true;
     el["progress-bar-fill"].style.width = "0%";
-    el["progress-text"].textContent = `Scanning 0 / ${state.pageSize}`;
+    el["progress-text"].textContent = `Scanning 0 / ${state.currentMessageIds.length}`;
 
     try {
-      const data = await apiPost(`/api/scan?provider=${state.provider}&count=${state.pageSize}`);
+      const data = await apiPost(`/api/scan?provider=${state.provider}`, {
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message_ids: state.currentMessageIds }),
+      });
       state.scanId = data.scan_id;
       pollScan();
     } catch (err) {
@@ -343,8 +360,18 @@
   function pollScan() {
     if (state.scanPollHandle) clearInterval(state.scanPollHandle);
 
+    const POLL_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes max
+    const pollStart = Date.now();
+
     state.scanPollHandle = setInterval(async () => {
       try {
+        if (Date.now() - pollStart > POLL_TIMEOUT_MS) {
+          clearInterval(state.scanPollHandle);
+          el["scan-btn"].disabled = false;
+          showToast("Scan polling timed out after 15 minutes.", "error");
+          return;
+        }
+
         const scan = await apiGet(`/api/scan/${state.scanId}`);
 
         const total = scan.requested || 1;
@@ -535,7 +562,12 @@
         </dl>
       </div>
       <div class="detail-section">
-        <h3>Geolocation / source infrastructure</h3>
+        <h3>Geolocation / source infrastructure ${
+          result.geo_status === "pending" ? '<span class="risk-badge risk-badge--unknown">ENRICHING…</span>'
+          : result.geo_status === "failed" ? '<span class="risk-badge risk-badge--unknown">LOOKUP FAILED</span>'
+          : result.geo_status === "not_applicable" ? '<span class="risk-badge risk-badge--unknown">N/A</span>'
+          : ''
+        }</h3>
         <ul class="evidence-list">${geoRows()}</ul>
       </div>
       <div class="detail-section">

@@ -20,7 +20,7 @@ from email.header import decode_header as _mime_decode_header
 from email.message import Message
 
 from backend.app.schemas.email_message import AttachmentMeta, NormalizedEmail
-from backend.app.services.url_extractor import extract_urls
+from backend.app.services.url_extractor import extract_urls_from_html, extract_urls_from_text
 
 
 def decode_mime_header(value: str | None) -> str:
@@ -149,7 +149,15 @@ def parse_rfc822_bytes(
             all_headers[key] = decode_mime_header(msg.get(key, ""))
 
     plain_body, html_body = _extract_bodies(msg)
-    urls = extract_urls(plain_body + "\n" + html_body)
+    # BUG FIX (Twitch false positive / URL extraction - see
+    # DIAGNOSTIC_EVIDENCE.md): concatenating plain_body + html_body and
+    # running one blanket regex over it used to sweep up non-destination
+    # markup values (xmlns namespace declarations, etc.) alongside real
+    # href/src destinations. Extract each body part with the extractor
+    # appropriate to its content.
+    urls = list(dict.fromkeys(
+        extract_urls_from_text(plain_body) + extract_urls_from_html(html_body)
+    ))
 
     return NormalizedEmail(
         provider=provider,
@@ -219,7 +227,15 @@ def parse_graph_message(
     plain_body = body_content if body_type == "text" else ""
     html_body = body_content if body_type == "html" else ""
 
-    urls = extract_urls(plain_body + "\n" + html_body)
+    # BUG FIX (Twitch false positive / URL extraction - see
+    # DIAGNOSTIC_EVIDENCE.md): concatenating plain_body + html_body and
+    # running one blanket regex over it used to sweep up non-destination
+    # markup values (xmlns namespace declarations, etc.) alongside real
+    # href/src destinations. Extract each body part with the extractor
+    # appropriate to its content.
+    urls = list(dict.fromkeys(
+        extract_urls_from_text(plain_body) + extract_urls_from_html(html_body)
+    ))
 
     sender = ((graph_message.get("from") or {}).get("emailAddress") or {}).get(
         "address", ""

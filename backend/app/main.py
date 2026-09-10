@@ -12,6 +12,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Query
 from fastapi.responses import RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from backend.app.auth import google_oauth, microsoft_oauth
 from backend.app.auth.session import (
@@ -24,7 +25,7 @@ from backend.app.auth.session import (
 from backend.app.providers.gmail_provider import GmailProvider
 from backend.app.providers.microsoft_provider import MicrosoftGraphProvider
 from backend.app.services.analysis_service import analyze_eml_upload
-from backend.app.services.scan_service import run_scan
+from backend.app.services.scan_service import run_scan, validate_scan_message_ids
 from backend.app.services.store import STORE
 from backend.app.threat_intel import phishtank_local, spamhaus, local_engine
 
@@ -38,7 +39,7 @@ ALLOWED_PAGE_SIZES = {5, 10, 20, 50, 100}
 # ============================================================
 
 @app.get("/health")
-def health():
+async def health():
     return {"status": "ok"}
 
 
@@ -92,7 +93,7 @@ def google_callback(request: Request):
 
 
 @app.get("/auth/google/status")
-def google_status(request: Request):
+async def google_status(request: Request):
     session = get_session_data(request)
     google_session = session.get("google")
 
@@ -155,7 +156,7 @@ def microsoft_callback(request: Request):
 
 
 @app.get("/auth/microsoft/status")
-def microsoft_status(request: Request):
+async def microsoft_status(request: Request):
     session = get_session_data(request)
     ms_session = session.get("microsoft")
 
@@ -260,47 +261,43 @@ def list_emails(
 # Scanning (bounded concurrency, per-message failure isolation)
 # ============================================================
 
+class ScanRequest(BaseModel):
+    # BUG FIX (page-scoped scan bug - see DIAGNOSTIC_EVIDENCE.md): the
+    # old signature took only a `count` integer and re-derived "the
+    # first N messages" via its own from-scratch pagination
+    # (page_token always starting at None), ignoring whatever page the
+    # user was actually viewing in the dashboard. The caller must now
+    # send the *exact* message IDs it currently has displayed - the
+    # same IDs /api/emails just returned for that page - so scanning
+    # page 2 scans page 2, not page 1 again. See
+    # scan_service.validate_scan_message_ids for the validation and
+    # session-scoping rationale.
+    message_ids: list[str]
+
+
 @app.post("/api/scan")
 async def start_scan(
     request: Request,
+    body: ScanRequest,
     provider: str = Query(..., pattern="^(google|microsoft)$"),
-    count: int = Query(5),
 ):
-    if count not in ALLOWED_PAGE_SIZES:
-        raise HTTPException(
-            status_code=400, detail=f"count must be one of {sorted(ALLOWED_PAGE_SIZES)}"
-        )
-
     session_id = get_session_id(request)
     if session_id is None:
         raise HTTPException(status_code=401, detail="No active session.")
 
+    try:
+        message_ids = validate_scan_message_ids(body.message_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # Constructing the provider (and, for Gmail, its per-thread
+    # transport - see gmail_provider.py) is enough to prove `provider`
+    # is a supported name and that this session actually has a
+    # connected account; the mailbox-ownership check for each
+    # individual ID happens naturally when run_scan() fetches it below
+    # (see validate_scan_message_ids' docstring for why that is the
+    # right place for it, not here).
     mail_provider = _get_provider(request, provider)
-
-    # BUG FIX (see MERGE_LOG.md): this pagination loop makes real
-    # network calls to the Gmail/Graph API. It used to run directly
-    # inside this `async def` route, which blocks FastAPI's single
-    # event loop for its entire duration - freezing every other
-    # request (logout, status checks, scan-progress polling) on the
-    # server until it finished. That is the most likely root cause of
-    # "buttons become unresponsive" and "scan looks frozen". Offload
-    # it to the executor like every other blocking provider call.
-    loop = asyncio.get_event_loop()
-
-    def collect_message_ids() -> list[str]:
-        ids: list[str] = []
-        page_token = None
-        while len(ids) < count:
-            page = mail_provider.list_messages(
-                page_size=min(count - len(ids), 100), page_token=page_token
-            )
-            ids.extend(item.message_id for item in page.items)
-            if not page.next_page_token or not page.items:
-                break
-            page_token = page.next_page_token
-        return ids
-
-    message_ids = await loop.run_in_executor(None, collect_message_ids)
 
     scan_id = STORE.create_scan(session_id=session_id, requested=len(message_ids))
 
@@ -317,7 +314,7 @@ async def start_scan(
 
 
 @app.get("/api/scan/{scan_id}")
-def get_scan(scan_id: str, request: Request):
+async def get_scan(scan_id: str, request: Request):
     session_id = get_session_id(request)
     if session_id is None:
         raise HTTPException(status_code=401, detail="No active session.")
@@ -723,6 +720,173 @@ def list_cases(request: Request):
         })
 
     return {"cases": cases}
+
+
+# ============================================================
+# Threat-Origin Geographic Analytics (RC6)
+#
+# Only includes messages at HIGH / CRITICAL risk with actual
+# geolocation enrichment.  Geographic data describes sending-
+# infrastructure location, NOT the attacker's physical location.
+# ============================================================
+
+@app.get("/api/threat-geo/summary")
+async def threat_geo_summary(request: Request):
+    session_id = get_session_id(request)
+    if session_id is None:
+        raise HTTPException(status_code=401, detail="No active session.")
+
+    suspicious = STORE.list_suspicious_results(session_id=session_id)
+
+    # Aggregate by country
+    by_country: dict[str, dict] = {}
+    unique_senders: set[str] = set()
+    unique_ips: set[str] = set()
+    risk_breakdown: dict[str, int] = {}
+
+    for r in suspicious:
+        geo_status = r.get("geo_status", "pending")
+        geo_list = r.get("m4") or []
+        risk_level = (r.get("risk") or {}).get("level", "UNKNOWN")
+        sender = (r.get("email") or {}).get("sender", "")
+        origin_ip = (r.get("m1") or {}).get("origin_ip")
+
+        risk_breakdown[risk_level] = risk_breakdown.get(risk_level, 0) + 1
+        if sender:
+            unique_senders.add(sender)
+        if origin_ip:
+            unique_ips.add(origin_ip)
+
+        if geo_status != "completed" or not geo_list:
+            continue
+
+        for geo in geo_list:
+            country = geo.get("country", "Unknown")
+            entry = by_country.setdefault(country, {
+                "country": country,
+                "count": 0,
+                "high": 0,
+                "critical": 0,
+                "unique_ips": set(),
+                "unique_senders": set(),
+            })
+            entry["count"] += 1
+            if risk_level == "HIGH":
+                entry["high"] += 1
+            elif risk_level == "CRITICAL":
+                entry["critical"] += 1
+            if origin_ip:
+                entry["unique_ips"].add(origin_ip)
+            if sender:
+                entry["unique_senders"].add(sender)
+
+    locations = []
+    for entry in sorted(by_country.values(), key=lambda x: x["count"], reverse=True):
+        locations.append({
+            "country": entry["country"],
+            "suspicious_count": entry["count"],
+            "high_count": entry["high"],
+            "critical_count": entry["critical"],
+            "unique_ips": len(entry["unique_ips"]),
+            "unique_senders": len(entry["unique_senders"]),
+            "note": "Represents email-sending infrastructure location, not sender physical location.",
+        })
+
+    return {
+        "total_suspicious": len(suspicious),
+        "enriched_count": sum(1 for r in suspicious if r.get("geo_status") == "completed"),
+        "pending_count": sum(1 for r in suspicious if r.get("geo_status") == "pending"),
+        "unique_senders": len(unique_senders),
+        "unique_ips": len(unique_ips),
+        "risk_breakdown": risk_breakdown,
+        "locations": locations,
+    }
+
+
+@app.get("/api/threat-geo/trend")
+async def threat_geo_trend(
+    request: Request,
+    period: str = Query("day", pattern="^(day|week|month)$"),
+):
+    import datetime as _dt
+
+    session_id = get_session_id(request)
+    if session_id is None:
+        raise HTTPException(status_code=401, detail="No active session.")
+
+    suspicious = STORE.list_suspicious_results(session_id=session_id)
+
+    # Parse dates and bucket by period
+    buckets: dict[str, dict] = {}
+    for r in suspicious:
+        date_str = (r.get("email") or {}).get("date", "")
+        analyzed_at = r.get("analyzed_at", "")
+        risk_level = (r.get("risk") or {}).get("level", "UNKNOWN")
+        sender = (r.get("email") or {}).get("sender", "")
+        origin_ip = (r.get("m1") or {}).get("origin_ip")
+
+        # Try to parse a date for bucketing (prefer analyzed_at, fall back to email date)
+        bucket_date = None
+        for d in [analyzed_at, date_str]:
+            if not d:
+                continue
+            try:
+                if "T" in d:
+                    bucket_date = _dt.datetime.fromisoformat(d.replace("Z", "+00:00")).date()
+                else:
+                    # Try common email date formats
+                    for fmt in ["%a, %d %b %Y %H:%M:%S %z", "%d %b %Y %H:%M:%S %z"]:
+                        try:
+                            bucket_date = _dt.datetime.strptime(d[:31], fmt).date()
+                            break
+                        except ValueError:
+                            continue
+                if bucket_date:
+                    break
+            except (ValueError, TypeError):
+                continue
+
+        if bucket_date is None:
+            bucket_date = _dt.date.today()
+
+        if period == "day":
+            key = bucket_date.isoformat()
+        elif period == "week":
+            start_of_week = bucket_date - _dt.timedelta(days=bucket_date.weekday())
+            key = f"week-{start_of_week.isoformat()}"
+        else:  # month
+            key = f"{bucket_date.year}-{bucket_date.month:02d}"
+
+        bucket = buckets.setdefault(key, {
+            "period": key,
+            "suspicious_count": 0,
+            "high_count": 0,
+            "critical_count": 0,
+            "unique_senders": set(),
+            "unique_ips": set(),
+        })
+        bucket["suspicious_count"] += 1
+        if risk_level == "HIGH":
+            bucket["high_count"] += 1
+        elif risk_level == "CRITICAL":
+            bucket["critical_count"] += 1
+        if sender:
+            bucket["unique_senders"].add(sender)
+        if origin_ip:
+            bucket["unique_ips"].add(origin_ip)
+
+    trend = []
+    for b in sorted(buckets.values(), key=lambda x: x["period"]):
+        trend.append({
+            "period": b["period"],
+            "suspicious_count": b["suspicious_count"],
+            "high_count": b["high_count"],
+            "critical_count": b["critical_count"],
+            "unique_senders": len(b["unique_senders"]),
+            "unique_ips": len(b["unique_ips"]),
+        })
+
+    return {"period_type": period, "trend": trend}
 
 
 # ============================================================
