@@ -43,7 +43,7 @@ M1 (auth/header forensics):
   DKIM fail                       -> +8
   DMARC fail                      -> +8
   Reply-To mismatch               -> +10
-  Return-Path mismatch            -> +8
+  Return-Path mismatch            -> +8  (or +2 if SPF+DKIM+DMARC all pass)
 
 M3 (threat intelligence, source-transparent):
   URL listed by PhishTank         -> +20 per listed URL (capped +40)
@@ -125,8 +125,39 @@ def calculate_risk(*, m1: dict, m2: dict, m3: dict, header_analysis: dict, attac
         contributing_modules.append("M1")
 
     if header_analysis.get("return_path_mismatch"):
-        score += 8
-        reasons.append("Return-Path does not match sender")
+        # BUG FIX (Twitch false positive / Return-Path semantics - see
+        # DIAGNOSTIC_EVIDENCE.md): this used to add a flat +8
+        # regardless of authentication outcome. Return-Path differing
+        # from the visible sender is completely normal for legitimate
+        # bulk-mail/ESP infrastructure (Amazon SES, SendGrid,
+        # Mailchimp, ...) precisely BECAUSE that infrastructure is
+        # third-party - it is not, by itself, evidence of spoofing.
+        # Verified against a real Twitch notification (From:
+        # no-reply@twitch.tv, Return-Path on Amazon SES) with SPF,
+        # DKIM, and DMARC all passing: the flat +8 contributed roughly
+        # a sixth of that email's total score with no relationship to
+        # whether the message was actually authenticated.
+        #
+        # This is generic - it keys off the authentication verdicts
+        # already computed by M1 for every message, not off any
+        # specific sender - so it does not special-case Twitch (or
+        # any other domain) and still scores a mismatch on an
+        # unauthenticated message the same as before.
+        strong_auth = (
+            m1.get("spf") == "pass"
+            and m1.get("dkim") == "pass"
+            and m1.get("dmarc") == "pass"
+        )
+        if strong_auth:
+            score += 2
+            reasons.append(
+                "Return-Path differs from sender (common for authenticated "
+                "bulk-mail/ESP infrastructure; weak signal since SPF, DKIM, "
+                "and DMARC all passed)"
+            )
+        else:
+            score += 8
+            reasons.append("Return-Path does not match sender")
         contributing_modules.append("M1")
 
     # ---------------- M3: threat intelligence ----------------
@@ -153,8 +184,8 @@ def calculate_risk(*, m1: dict, m2: dict, m3: dict, header_analysis: dict, attac
         ]
         if local_scores:
             avg_local = sum(local_scores) / len(local_scores)
-            local_contribution = min(avg_local / 10, 10)
-            if local_contribution >= 3:
+            local_contribution = min(avg_local / 10, 8)
+            if local_contribution >= 5:
                 score += local_contribution
                 contributing_modules.append("M3")
                 reasons.append("Local heuristics flagged indicator patterns")
