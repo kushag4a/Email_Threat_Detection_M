@@ -5,7 +5,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import asyncio
-import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -26,42 +25,13 @@ from backend.app.auth.session import (
 from backend.app.providers.gmail_provider import GmailProvider
 from backend.app.providers.microsoft_provider import MicrosoftGraphProvider
 from backend.app.services.analysis_service import analyze_eml_upload
-from backend.app.services.db import default_db_path
-from backend.app.services.mailbox_cache import MAILBOX_CACHE
-from backend.app.services.retention import run_retention_cleanup
 from backend.app.services.scan_service import run_scan, validate_scan_message_ids
 from backend.app.services.store import STORE
 from backend.app.threat_intel import phishtank_local, spamhaus, local_engine
 
-logger = logging.getLogger("email_threat_platform.main")
-
 app = FastAPI(title="AI Email Threat Detection Platform", version="1.0.0")
 
 ALLOWED_PAGE_SIZES = {5, 10, 20, 50, 100}
-
-# Small, dedicated, bounded pool for background page prefetch (Task 9).
-# Deliberately separate from scan_service's IO_POOL/CPU_POOL so a
-# prefetch can never compete with or delay a foreground scan, and
-# capped at 2 workers so it can never itself hammer the Gmail/Graph
-# API - at most 2 prefetch requests in flight at any time, regardless
-# of how fast the user clicks through pages.
-PREFETCH_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="mailbox-prefetch")
-
-
-@app.on_event("startup")
-def _startup_retention_sweep() -> None:
-    """
-    Best-effort cleanup of stale cached/history rows on process start
-    (see retention.py). Never touches OAuth credentials/tokens (those
-    live only in the separate, in-memory SESSION_STORE - see
-    auth/session.py) and never removes an in-progress scan. A failure
-    here must never prevent the server from starting.
-    """
-    try:
-        removed = run_retention_cleanup(db_path=str(default_db_path()))
-        logger.info("startup retention sweep: %s", removed)
-    except Exception:
-        logger.warning("startup retention sweep failed (non-fatal)", exc_info=True)
 
 
 # ============================================================
@@ -224,33 +194,35 @@ def _get_provider(request: Request, provider_name: str):
     raise HTTPException(status_code=400, detail=f"Unknown provider {provider_name}")
 
 
-def _account_id_for(request: Request, provider_name: str) -> str:
-    """
-    The mailbox identity used as the local cache/results key.
+# ============================================================
+# Mailbox (listing, native pagination)
+# ============================================================
 
-    Deliberately read from the already-known session data (set at
-    OAuth callback time - see google_callback/microsoft_callback
-    above) rather than calling provider.get_current_user(), which
-    for Gmail is a real API request (see gmail_provider.py). Calling
-    that on every /api/emails hit would add an extra Gmail API call
-    to every single page load/navigation - directly working against
-    this cache's whole purpose of reducing Gmail quota usage (see
-    project handoff Task 10).
-    """
-    session = get_session_data(request)
-    provider_session = session.get(provider_name) or {}
-    return provider_session.get("email") or ""
+@app.get("/api/emails")
+def list_emails(
+    request: Request,
+    provider: str = Query(..., pattern="^(google|microsoft)$"),
+    page_size: int = Query(5),
+    page_token: str | None = None,
+):
+    if page_size not in ALLOWED_PAGE_SIZES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"page_size must be one of {sorted(ALLOWED_PAGE_SIZES)}",
+        )
 
+    mail_provider = _get_provider(request, provider)
+    page = mail_provider.list_messages(page_size=page_size, page_token=page_token)
 
-def _fetch_page_summaries(mail_provider, provider: str, message_ids: list[str]) -> list[dict]:
-    """
-    Concurrently fetch cheap per-message metadata for a page of
-    message ids (NOT full raw messages - see get_message_summary).
-    A per-message failure produces a placeholder row with an "error"
-    key rather than aborting the whole page - unchanged from the
-    original page-listing behavior (see MERGE_LOG.md P0 fix).
-    """
-    summaries: list[dict] = [None] * len(message_ids)  # type: ignore[list-item]
+    # P0 FIX (see MERGE_LOG.md): this used to return bare {message_id,
+    # thread_id} pairs, which is why the inbox table showed blank
+    # sender/subject/date for a real inbox. Fetch cheap per-message
+    # metadata (NOT full raw messages - see get_message_summary) for
+    # just this page, concurrently, so listing stays fast even at
+    # page_size=100. This function itself runs in FastAPI's worker
+    # threadpool (sync def route), so blocking calls here do not
+    # freeze the event loop.
+    summaries: list[dict] = [None] * len(page.items)  # type: ignore[list-item]
 
     def fetch_one(index: int, message_id: str):
         try:
@@ -269,135 +241,18 @@ def _fetch_page_summaries(mail_provider, provider: str, message_ids: list[str]) 
                 "error": str(exc),
             }
 
-    with ThreadPoolExecutor(max_workers=min(10, max(1, len(message_ids)))) as pool:
-        futures = [pool.submit(fetch_one, i, mid) for i, mid in enumerate(message_ids)]
+    with ThreadPoolExecutor(max_workers=min(10, max(1, len(page.items)))) as pool:
+        futures = [
+            pool.submit(fetch_one, i, item.message_id)
+            for i, item in enumerate(page.items)
+        ]
         for f in futures:
             f.result()
-
-    return summaries
-
-
-def _prefetch_page(mail_provider, provider: str, account_id: str,
-                    page_size: int, page_token: str) -> None:
-    """
-    Background job (Task 9): fetch one nearby page and populate the
-    cache with it, so a later click to that page is a cache hit
-    instead of a fresh Gmail/Graph round trip. Bounded by
-    PREFETCH_POOL's fixed worker count and by try_start_prefetch's
-    dedupe (see mailbox_cache.py) - never more than one in-flight
-    prefetch per exact page, and never a page that's already cached.
-
-    A page is only cached here if EVERY message in it fetched
-    successfully - a page with transient per-message failures is
-    deliberately left uncached so the next real visit retries it
-    cleanly, instead of caching "(failed to load)" placeholders for
-    the full retention window.
-    """
-    try:
-        page = mail_provider.list_messages(page_size=page_size, page_token=page_token)
-        if page.items:
-            summaries = _fetch_page_summaries(
-                mail_provider, provider, [item.message_id for item in page.items]
-            )
-            if not any("error" in s for s in summaries):
-                MAILBOX_CACHE.save_page(
-                    provider=provider, account_id=account_id, page_size=page_size,
-                    page_token=page_token, messages=summaries,
-                    next_page_token=page.next_page_token,
-                )
-    except Exception:
-        logger.warning(
-            "background prefetch failed (provider=%s page_size=%s)",
-            provider, page_size, exc_info=True,
-        )
-    finally:
-        MAILBOX_CACHE.finish_prefetch(
-            provider=provider, account_id=account_id,
-            page_size=page_size, page_token=page_token,
-        )
-
-
-def _maybe_prefetch_next_page(mail_provider, provider: str, account_id: str,
-                               page_size: int, next_page_token: str | None) -> None:
-    if not next_page_token:
-        return
-    if not MAILBOX_CACHE.try_start_prefetch(
-        provider=provider, account_id=account_id,
-        page_size=page_size, page_token=next_page_token,
-    ):
-        return  # already cached, or another prefetch for this exact page is in flight
-    PREFETCH_POOL.submit(
-        _prefetch_page, mail_provider, provider, account_id, page_size, next_page_token
-    )
-
-
-# ============================================================
-# Mailbox (listing, native pagination)
-#
-# Local cache (see mailbox_cache.py): the first visit to a given
-# (provider, account, page_size, page_token) fetches from Gmail/Graph
-# and caches the result; every later visit to that exact page is
-# served from SQLite/RAM without touching the provider at all. A
-# Gmail/Graph page_token is only ever used here as a cache lookup key
-# (a transport cursor), never as a message's permanent identity -
-# that identity is always (provider, account_id, message_id), both in
-# this cache and in ResultStore (see store.py / MERGE_LOG.md).
-# ============================================================
-
-@app.get("/api/emails")
-def list_emails(
-    request: Request,
-    provider: str = Query(..., pattern="^(google|microsoft)$"),
-    page_size: int = Query(5),
-    page_token: str | None = None,
-):
-    if page_size not in ALLOWED_PAGE_SIZES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"page_size must be one of {sorted(ALLOWED_PAGE_SIZES)}",
-        )
-
-    mail_provider = _get_provider(request, provider)
-    account_id = _account_id_for(request, provider)
-
-    cached = MAILBOX_CACHE.get_page(
-        provider=provider, account_id=account_id,
-        page_size=page_size, page_token=page_token,
-    )
-
-    if cached is not None:
-        summaries = cached["messages"]
-        next_page_token = cached["next_page_token"]
-    else:
-        # P0 FIX (see MERGE_LOG.md): this used to return bare
-        # {message_id, thread_id} pairs, which is why the inbox table
-        # showed blank sender/subject/date for a real inbox. Fetch
-        # cheap per-message metadata (NOT full raw messages - see
-        # get_message_summary) for just this page, concurrently, so
-        # listing stays fast even at page_size=100. This function
-        # itself runs in FastAPI's worker threadpool (sync def
-        # route), so blocking calls here do not freeze the event loop.
-        page = mail_provider.list_messages(page_size=page_size, page_token=page_token)
-        summaries = _fetch_page_summaries(
-            mail_provider, provider, [item.message_id for item in page.items]
-        )
-        next_page_token = page.next_page_token
-
-        # Only persist a fully-successful page - see _prefetch_page's
-        # docstring for why a partially-failed page is left uncached.
-        if not any("error" in s for s in summaries):
-            MAILBOX_CACHE.save_page(
-                provider=provider, account_id=account_id, page_size=page_size,
-                page_token=page_token, messages=summaries,
-                next_page_token=next_page_token,
-            )
-
-    _maybe_prefetch_next_page(mail_provider, provider, account_id, page_size, next_page_token)
 
     return {
         "provider": provider,
         "messages": summaries,
-        "next_page_token": next_page_token,
+        "next_page_token": page.next_page_token,
         "page_size": page_size,
     }
 
