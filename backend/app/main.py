@@ -27,7 +27,7 @@ from backend.app.providers.gmail_provider import GmailProvider
 from backend.app.providers.microsoft_provider import MicrosoftGraphProvider
 from backend.app.services.analysis_service import analyze_eml_upload
 from backend.app.services.db import default_db_path
-from backend.app.services.mailbox_cache import MAILBOX_CACHE
+from backend.app.services.mailbox_cache import MAILBOX_CACHE, MAILBOX_CACHE_TTL_SECONDS
 from backend.app.services.retention import run_retention_cleanup
 from backend.app.services.scan_service import run_scan, validate_scan_message_ids
 from backend.app.services.store import STORE
@@ -280,12 +280,14 @@ def _fetch_page_summaries(mail_provider, provider: str, message_ids: list[str]) 
 def _prefetch_page(mail_provider, provider: str, account_id: str,
                     page_size: int, page_token: str) -> None:
     """
-    Background job (Task 9): fetch one nearby page and populate the
+    Background job (Task 9): refresh one nearby page and populate the
     cache with it, so a later click to that page is a cache hit
     instead of a fresh Gmail/Graph round trip. Bounded by
     PREFETCH_POOL's fixed worker count and by try_start_prefetch's
-    dedupe (see mailbox_cache.py) - never more than one in-flight
-    prefetch per exact page, and never a page that's already cached.
+    dedupe + failure cooldown (see mailbox_cache.py) - never more than
+    one in-flight refresh per exact page, never a page that's already
+    cached AND fresh, and never an immediate retry of a page that just
+    failed.
 
     A page is only cached here if EVERY message in it fetched
     successfully - a page with transient per-message failures is
@@ -305,30 +307,180 @@ def _prefetch_page(mail_provider, provider: str, account_id: str,
                     page_token=page_token, messages=summaries,
                     next_page_token=page.next_page_token,
                 )
-    except Exception:
+            else:
+                MAILBOX_CACHE.finish_prefetch(
+                    provider=provider, account_id=account_id,
+                    page_size=page_size, page_token=page_token, failed=True,
+                )
+                return
+    except Exception as exc:
+        # BUG FIX (prefetch hammering Gmail quota - see
+        # DIAGNOSTIC_EVIDENCE.md): failed=True starts a cooldown (see
+        # MailboxCache.finish_prefetch) so the very next request for a
+        # page whose next_page_token points here does not immediately
+        # re-trigger another attempt against a quota that has not had
+        # time to reset. Applies to ANY prefetch failure, not only a
+        # detected 403/rateLimitExceeded - a network error or a
+        # transient provider outage deserves the same backoff, not an
+        # immediate retry storm.
         logger.warning(
             "background prefetch failed (provider=%s page_size=%s)",
             provider, page_size, exc_info=True,
         )
-    finally:
         MAILBOX_CACHE.finish_prefetch(
             provider=provider, account_id=account_id,
-            page_size=page_size, page_token=page_token,
+            page_size=page_size, page_token=page_token, failed=True,
         )
+        return
+    MAILBOX_CACHE.finish_prefetch(
+        provider=provider, account_id=account_id,
+        page_size=page_size, page_token=page_token,
+    )
 
 
 def _maybe_prefetch_next_page(mail_provider, provider: str, account_id: str,
                                page_size: int, next_page_token: str | None) -> None:
     if not next_page_token:
         return
+    # BUG FIX (stale mailbox cache - see DIAGNOSTIC_EVIDENCE.md):
+    # max_age_seconds makes a page that is cached but AGED PAST the
+    # freshness TTL eligible for background refresh too, not just a
+    # page that was never cached at all - otherwise a prefetched-once
+    # page would never be revalidated again for the lifetime of the
+    # process.
     if not MAILBOX_CACHE.try_start_prefetch(
         provider=provider, account_id=account_id,
         page_size=page_size, page_token=next_page_token,
+        max_age_seconds=MAILBOX_CACHE_TTL_SECONDS,
     ):
-        return  # already cached, or another prefetch for this exact page is in flight
+        return  # fresh enough already, in flight, or still in a failure cooldown
     PREFETCH_POOL.submit(
         _prefetch_page, mail_provider, provider, account_id, page_size, next_page_token
     )
+
+
+def _get_fresh_page(mail_provider, provider: str, account_id: str, page_size: int,
+                     page_token: str | None) -> dict:
+    """
+    BUG FIX (stale mailbox cache - see DIAGNOSTIC_EVIDENCE.md): the
+    foreground counterpart to _prefetch_page/_maybe_prefetch_next_page
+    above. Returns {"messages": [...], "next_page_token": ...}.
+
+    Policy (see docs/SQLITE_AND_CACHE.md for the full write-up):
+      1. Cached AND fresh (age <= MAILBOX_CACHE_TTL_SECONDS) -> return
+         it immediately. No provider call.
+      2. Missing or stale -> exactly one caller refreshes the provider
+         (via try_start_prefetch's single-flight claim); every other
+         concurrent caller for the SAME (provider, account_id,
+         page_size, page_token) blocks on wait_for_in_flight_refresh
+         instead of independently calling the provider - this is what
+         keeps 50 simultaneous requests for one stale page down to
+         exactly 1 Gmail/Graph call, the same guarantee the background
+         prefetcher already had, now extended to the foreground path
+         that actually serves /api/emails.
+      3. If the refresh succeeds, the fresh page (now re-stamped with
+         the current fetch time - see mailbox_cache.save_page) is
+         returned.
+      4. If the refresh fails and a stale copy exists, the stale copy
+         is returned as a safe fallback rather than turning a
+         transient provider error into a hard failure for something
+         the user could otherwise still see (with a log line making
+         the fallback visible in server logs) - its freshness
+         timestamp is deliberately NOT touched by a failed refresh
+         (finish_prefetch(failed=True) never calls save_page), so the
+         very next request will correctly see it as still stale and
+         try again (subject to the failure cooldown) rather than being
+         fooled into treating a failed refresh as a successful one.
+      5. If the refresh fails and there is no stale copy at all (a
+         true first-time miss), the provider exception propagates -
+         there is nothing safe to fall back to.
+    """
+    if MAILBOX_CACHE.is_page_fresh(
+        provider=provider, account_id=account_id, page_size=page_size,
+        page_token=page_token, max_age_seconds=MAILBOX_CACHE_TTL_SECONDS,
+    ):
+        cached = MAILBOX_CACHE.get_page(
+            provider=provider, account_id=account_id,
+            page_size=page_size, page_token=page_token,
+        )
+        if cached is not None:  # always true here barring a same-instant eviction race
+            return cached
+
+    if MAILBOX_CACHE.try_start_prefetch(
+        provider=provider, account_id=account_id, page_size=page_size,
+        page_token=page_token, max_age_seconds=MAILBOX_CACHE_TTL_SECONDS,
+    ):
+        # We are the single-flight winner - do the real fetch.
+        try:
+            page = mail_provider.list_messages(page_size=page_size, page_token=page_token)
+            summaries = _fetch_page_summaries(
+                mail_provider, provider, [item.message_id for item in page.items]
+            )
+            # Only persist a fully-successful page - see _prefetch_page's
+            # docstring for why a partially-failed page is left uncached.
+            if any("error" in s for s in summaries):
+                raise RuntimeError(
+                    f"{sum('error' in s for s in summaries)} of "
+                    f"{len(summaries)} messages failed to fetch"
+                )
+            MAILBOX_CACHE.save_page(
+                provider=provider, account_id=account_id, page_size=page_size,
+                page_token=page_token, messages=summaries,
+                next_page_token=page.next_page_token,
+            )
+            MAILBOX_CACHE.finish_prefetch(
+                provider=provider, account_id=account_id,
+                page_size=page_size, page_token=page_token,
+            )
+            return {"messages": summaries, "next_page_token": page.next_page_token}
+        except Exception:
+            MAILBOX_CACHE.finish_prefetch(
+                provider=provider, account_id=account_id,
+                page_size=page_size, page_token=page_token, failed=True,
+            )
+            stale = MAILBOX_CACHE.get_page(
+                provider=provider, account_id=account_id,
+                page_size=page_size, page_token=page_token,
+            )
+            if stale is not None:
+                logger.warning(
+                    "mailbox refresh failed (provider=%s page_size=%s) - "
+                    "serving stale cached page as fallback",
+                    provider, page_size, exc_info=True,
+                )
+                return stale
+            raise
+
+    # We lost the single-flight race - join the winner instead of
+    # independently calling the provider ourselves (this is the fix:
+    # without this wait, every one of N concurrent callers for a stale
+    # page would fall through to fetching it themselves).
+    MAILBOX_CACHE.wait_for_in_flight_refresh(
+        provider=provider, account_id=account_id,
+        page_size=page_size, page_token=page_token,
+    )
+    result = MAILBOX_CACHE.get_page(
+        provider=provider, account_id=account_id,
+        page_size=page_size, page_token=page_token,
+    )
+    if result is not None:
+        return result
+    # Extremely rare: the winner failed AND there was never any cached
+    # copy for us to fall back to either (a true first-time miss that
+    # also lost the race, which only happens if two requests for a
+    # brand new page arrive at almost the exact same instant). Fall
+    # through to fetching it ourselves rather than returning nothing.
+    page = mail_provider.list_messages(page_size=page_size, page_token=page_token)
+    summaries = _fetch_page_summaries(
+        mail_provider, provider, [item.message_id for item in page.items]
+    )
+    if not any("error" in s for s in summaries):
+        MAILBOX_CACHE.save_page(
+            provider=provider, account_id=account_id, page_size=page_size,
+            page_token=page_token, messages=summaries,
+            next_page_token=page.next_page_token,
+        )
+    return {"messages": summaries, "next_page_token": page.next_page_token}
 
 
 # ============================================================
@@ -336,12 +488,17 @@ def _maybe_prefetch_next_page(mail_provider, provider: str, account_id: str,
 #
 # Local cache (see mailbox_cache.py): the first visit to a given
 # (provider, account, page_size, page_token) fetches from Gmail/Graph
-# and caches the result; every later visit to that exact page is
-# served from SQLite/RAM without touching the provider at all. A
-# Gmail/Graph page_token is only ever used here as a cache lookup key
-# (a transport cursor), never as a message's permanent identity -
-# that identity is always (provider, account_id, message_id), both in
-# this cache and in ResultStore (see store.py / MERGE_LOG.md).
+# and caches the result; every later visit to that exact page, WITHIN
+# the freshness TTL (VALORPROTECTS_MAILBOX_CACHE_TTL_SECONDS, default
+# 1 hour - see mailbox_cache.py), is served from SQLite/RAM without
+# touching the provider at all. Once a cached page ages past that TTL,
+# the next request to it triggers exactly one revalidation fetch
+# (single-flight - see _get_fresh_page above), not one fetch per
+# concurrent caller. A Gmail/Graph page_token is only ever used here as
+# a cache lookup key (a transport cursor), never as a message's
+# permanent identity - that identity is always
+# (provider, account_id, message_id), both in this cache and in
+# ResultStore (see store.py / MERGE_LOG.md).
 # ============================================================
 
 @app.get("/api/emails")
@@ -360,37 +517,9 @@ def list_emails(
     mail_provider = _get_provider(request, provider)
     account_id = _account_id_for(request, provider)
 
-    cached = MAILBOX_CACHE.get_page(
-        provider=provider, account_id=account_id,
-        page_size=page_size, page_token=page_token,
-    )
-
-    if cached is not None:
-        summaries = cached["messages"]
-        next_page_token = cached["next_page_token"]
-    else:
-        # P0 FIX (see MERGE_LOG.md): this used to return bare
-        # {message_id, thread_id} pairs, which is why the inbox table
-        # showed blank sender/subject/date for a real inbox. Fetch
-        # cheap per-message metadata (NOT full raw messages - see
-        # get_message_summary) for just this page, concurrently, so
-        # listing stays fast even at page_size=100. This function
-        # itself runs in FastAPI's worker threadpool (sync def
-        # route), so blocking calls here do not freeze the event loop.
-        page = mail_provider.list_messages(page_size=page_size, page_token=page_token)
-        summaries = _fetch_page_summaries(
-            mail_provider, provider, [item.message_id for item in page.items]
-        )
-        next_page_token = page.next_page_token
-
-        # Only persist a fully-successful page - see _prefetch_page's
-        # docstring for why a partially-failed page is left uncached.
-        if not any("error" in s for s in summaries):
-            MAILBOX_CACHE.save_page(
-                provider=provider, account_id=account_id, page_size=page_size,
-                page_token=page_token, messages=summaries,
-                next_page_token=next_page_token,
-            )
+    page = _get_fresh_page(mail_provider, provider, account_id, page_size, page_token)
+    summaries = page["messages"]
+    next_page_token = page["next_page_token"]
 
     _maybe_prefetch_next_page(mail_provider, provider, account_id, page_size, next_page_token)
 

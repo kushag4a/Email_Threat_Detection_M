@@ -140,6 +140,22 @@ def analyze_normalized_email(email: NormalizedEmail) -> dict:
         "high_severity_filenames": attachment_result["high_severity_filenames"],
     }
 
+    # ---------------- API contract prep (frontend explainability) ----------------
+    # calculate_risk() already returns everything the future frontend
+    # needs to render "RISK SCORE / WHY / SCORE CALCULATION / ACTIVE
+    # SCORING POLICY" (see risk_engine.py's `calculation` key: raw vs
+    # final score, per-signal contributions with the multiplier
+    # actually used, caps_applied, floors_applied, thresholds). This
+    # is surfaced here as top-level `risk_calculation` and
+    # `risk_config_version` fields so a frontend can render them
+    # without reaching into `risk` internals, while `risk` itself
+    # keeps its existing score/level/reasons/contributing_modules
+    # shape for backward compatibility with any existing caller. No
+    # frontend redesign is implemented here - see TASK 4 - this is
+    # API-contract preparation only.
+    risk_calculation = risk.get("calculation")
+    risk_config_version = risk.get("config_version")
+
     return {
         "message_id": email.message_id,
         "provider": email.provider,
@@ -158,12 +174,14 @@ def analyze_normalized_email(email: NormalizedEmail) -> dict:
         "m2": m2_result,
         "m3": m3_result,
         "m4": geo_results,
-        "geo_status": "pending",  # Background enrichment will update this
+        "geo_status": "pending" if m1_result.get("origin_ip") else "not_applicable",
         "urls": email.urls,
         "attachments_present": bool(email.attachments),
         "attachments": attachments_output,
         "attachment_analysis": attachment_summary,
         "risk": risk,
+        "risk_calculation": risk_calculation,
+        "risk_config_version": risk_config_version,
         "evidence_sources": evidence_sources,
         "status": "analyzed",
         "error": None,
@@ -191,6 +209,8 @@ def analyze_email_safe(email: NormalizedEmail) -> dict:
                 "date": email.date,
             },
             "risk": {"score": 0, "level": "UNKNOWN", "reasons": [], "contributing_modules": []},
+            "risk_calculation": None,
+            "risk_config_version": None,
             "status": "analysis_failed",
             "error": str(exc),
             "analyzed_at": datetime.datetime.utcnow().isoformat() + "Z",

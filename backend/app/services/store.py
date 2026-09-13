@@ -37,7 +37,6 @@ import time
 import uuid
 
 from backend.app.services.db import Database, default_db_path, get_database
-
 # Legacy provider names that should be treated as equivalent to the
 # canonical name.  When GmailProvider.name changed from "gmail" to
 # "google", any results stored during a previous session under

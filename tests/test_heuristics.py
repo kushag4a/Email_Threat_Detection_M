@@ -155,4 +155,4 @@ class TestPipelineRegression:
         from backend.app.services.analysis_service import analyze_email_safe
         result = analyze_email_safe(sample_email)
         assert "geo_status" in result
-        assert result["geo_status"] == "pending"
+        assert result["geo_status"] == "not_applicable"

@@ -1,0 +1,26 @@
+From: CEO Office <ceo.office@example-attacker.test>
+To: finance@example-company.test
+Date: Fri, 11 Sep 2026 10:02:11 +0530
+Subject: URGENT: confidential transfer request
+Message-ID: <20260911100211.001@example-attacker.test>
+Reply-To: urgent-transfer@example-attacker.test
+X-Mailer: Synthetic-Phishing-Test/1.0
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+
+SECURITY TEST CASE: Display-name spoofing
+
+Hello Finance Team,
+
+I am in a meeting and need a confidential vendor payment processed immediately.
+Please treat this as urgent and do not call me because I am unavailable.
+
+Amount: INR 248,500
+Reference: VND-88421
+
+Reply with confirmation that the transfer has been initiated.
+
+Regards,
+Chief Executive Officer
+
+[NO REAL PAYMENT OR CREDENTIALS SHOULD BE USED. SYNTHETIC TEST MESSAGE.]

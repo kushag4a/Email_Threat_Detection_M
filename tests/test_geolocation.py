@@ -105,7 +105,15 @@ class TestGeoEnrichmentIntegration:
 
 
 class TestGeoStatusInAnalysis:
-    def test_analysis_result_has_geo_status_pending(self, sample_email):
+    def test_analysis_without_origin_ip_is_not_applicable(self, sample_email):
         from backend.app.services.analysis_service import analyze_email_safe
         result = analyze_email_safe(sample_email)
-        assert result["geo_status"] == "pending"
+        assert result["m1"]["origin_ip"] is None
+        assert result["geo_status"] == "not_applicable"
+
+class TestGeoStatusForMissingOrigin:
+    def test_analysis_without_origin_ip_is_not_applicable(self, sample_email):
+        from backend.app.services.analysis_service import analyze_email_safe
+        result = analyze_email_safe(sample_email)
+        assert result["m1"]["origin_ip"] is None
+        assert result["geo_status"] == "not_applicable"

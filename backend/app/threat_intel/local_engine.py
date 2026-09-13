@@ -1,5 +1,6 @@
 import ipaddress
-from urllib.parse import urlparse
+import re
+from urllib.parse import parse_qs, unquote, urlparse
 
 SUSPICIOUS_URL_WORDS = {
     "login",
@@ -90,6 +91,156 @@ def _is_known_esp_host(hostname: str) -> bool:
     return False
 
 
+# ── Brand-lookalike / homoglyph detection ──────────────────────────
+#
+# Deliberately a small, curated list of frequently-impersonated
+# identity/financial/productivity brands - not a general "known good"
+# allowlist (that lives in _KNOWN_ESP_HOSTS above and is unrelated).
+# For each brand we record the brand's OWN real domains so a hostname
+# that genuinely belongs to the brand is never flagged as mimicking
+# itself.
+_PROTECTED_BRANDS: dict[str, set[str]] = {
+    "google": {"google.com", "gmail.com", "googlemail.com"},
+    "microsoft": {"microsoft.com", "microsoftonline.com", "live.com", "outlook.com", "office.com", "office365.com"},
+    "apple": {"apple.com", "icloud.com"},
+    "paypal": {"paypal.com"},
+    "amazon": {"amazon.com", "amazon.in", "amazon.co.uk"},
+    "facebook": {"facebook.com", "fb.com"},
+    "instagram": {"instagram.com"},
+    "netflix": {"netflix.com"},
+    "linkedin": {"linkedin.com"},
+    "dropbox": {"dropbox.com"},
+    "docusign": {"docusign.com", "docusign.net"},
+    "chase": {"chase.com"},
+    "wellsfargo": {"wellsfargo.com"},
+    "bankofamerica": {"bankofamerica.com"},
+    "whatsapp": {"whatsapp.com"},
+}
+
+# Cheap, explicit leetspeak/homoglyph substitution table. This is not
+# meant to be exhaustive - it only needs to catch the common ASCII
+# digit-for-letter substitutions ("goog1e", "arnaz0n") that real
+# lookalike-domain campaigns actually use.
+_LEET_TABLE = str.maketrans({
+    "0": "o", "1": "l", "3": "e", "4": "a", "5": "s", "7": "t",
+    "$": "s", "!": "i", "@": "a",
+})
+
+_TOKEN_SPLIT_RE = re.compile(r"[.\-_]")
+
+
+def _decode_idn_host(hostname: str) -> str:
+    """Best-effort punycode -> Unicode decode, for homoglyph comparison.
+    Falls back to the original hostname on any failure - this is a
+    detection aid, never something that can raise or hide data."""
+    if "xn--" not in hostname:
+        return hostname
+    try:
+        return hostname.encode("ascii").decode("idna")
+    except Exception:
+        return hostname
+
+
+def _levenshtein_at_most(a: str, b: str, limit: int) -> bool:
+    """True if edit distance between a and b is <= limit. Short-circuits
+    via length difference before doing the full DP pass."""
+    if abs(len(a) - len(b)) > limit:
+        return False
+    m, n = len(a), len(b)
+    prev = list(range(n + 1))
+    for i in range(1, m + 1):
+        curr = [i] + [0] * n
+        for j in range(1, n + 1):
+            cost = 0 if a[i - 1] == b[j - 1] else 1
+            curr[j] = min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost)
+        prev = curr
+    return prev[n] <= limit
+
+
+def detect_brand_lookalike(hostname: str) -> dict | None:
+    """
+    Detect a hostname that is impersonating one of _PROTECTED_BRANDS via
+    punycode/homoglyphs, leetspeak substitution, or a close-edit-distance
+    misspelling, WITHOUT actually being that brand's real domain.
+
+    Token-boundary matching: brand names are compared against whole
+    dot/hyphen/underscore-delimited labels (e.g. "goog1e" in
+    "goog1e-security.test"), not as a raw substring of the hostname -
+    so a legitimate hostname that merely contains a brand name as part
+    of an unrelated word ("mygoogleanalyticsclone.test") is not
+    penalized as aggressively as an attacker who staged the brand name
+    as its own token.
+
+    Returns None when the hostname is legitimate or no brand is
+    matched; otherwise a small dict describing the match.
+    """
+    if not hostname:
+        return None
+    host = hostname.lower().rstrip(".")
+
+    # If the hostname genuinely belongs to the brand (exact or
+    # subdomain), it is never a lookalike of itself.
+    for real_domains in _PROTECTED_BRANDS.values():
+        if any(host == d or host.endswith("." + d) for d in real_domains):
+            return None
+
+    decoded = _decode_idn_host(host)
+    leet = host.translate(_LEET_TABLE)
+    decoded_leet = decoded.translate(_LEET_TABLE)
+
+    candidates = {host, decoded, leet, decoded_leet}
+
+    for brand in _PROTECTED_BRANDS:
+        for candidate in candidates:
+            for label in _TOKEN_SPLIT_RE.split(candidate):
+                if not label:
+                    continue
+                if label == brand:
+                    return {"brand": brand, "matched_label": label}
+                if len(label) >= 5 and _levenshtein_at_most(label, brand, 2):
+                    return {"brand": brand, "matched_label": label}
+    return None
+
+
+# ── Nested redirect destination decoding ───────────────────────────
+#
+# Attackers frequently route a phishing link through a first-hop
+# "redirector" URL (their own domain, or a compromised one) that
+# carries the real destination in a query parameter, so the visibly
+# displayed link never shows the real phishing host. This does not
+# try to be a general-purpose URL shortener resolver - it only decodes
+# an already-visible nested destination embedded in the URL itself, it
+# never makes a network request.
+_REDIRECT_PARAM_NAMES = {
+    "url", "u", "r", "next", "redirect", "redirect_uri", "redirect_url",
+    "return", "returnurl", "return_to", "continue", "dest", "destination",
+    "target", "out", "forward", "goto", "redir", "link", "to",
+}
+
+
+def _extract_nested_destination(url: str) -> str | None:
+    """Return the first http(s) URL found decoded out of a known
+    redirect-style query parameter, or None if there isn't one."""
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return None
+    if not parsed.query:
+        return None
+    try:
+        params = parse_qs(parsed.query)
+    except ValueError:
+        return None
+    for name in _REDIRECT_PARAM_NAMES:
+        values = params.get(name)
+        if not values:
+            continue
+        candidate = unquote(values[0]).strip()
+        if candidate.lower().startswith(("http://", "https://")):
+            return candidate
+    return None
+
+
 def analyze_ip(ip: str) -> dict:
     flags = []
 
@@ -122,7 +273,7 @@ def analyze_ip(ip: str) -> dict:
     }
 
 
-def analyze_url(url: str) -> dict:
+def analyze_url(url: str, _nested_depth: int = 0) -> dict:
     flags = []
     score = 0
 
@@ -136,7 +287,59 @@ def analyze_url(url: str) -> dict:
 
         if "@" in url:
             flags.append("userinfo_in_url")
+            # Explicit, higher-confidence flag for the risk engine: an
+            # "@" before the real host is a classic obfuscation trick
+            # (the part before "@" is discarded as URL userinfo and
+            # never actually visited), distinct from a merely unusual
+            # URL. Same trigger condition as userinfo_in_url above -
+            # kept as a separate flag name so the risk engine can give
+            # it its own explicit, documented contribution without
+            # changing what userinfo_in_url means to existing callers.
+            flags.append("uri_userinfo_obfuscation")
             score += 20
+
+        lookalike = detect_brand_lookalike(hostname)
+        if lookalike:
+            flags.append("brand_lookalike_domain")
+            score += 30
+
+        # Only decode one hop of nested-destination redirect, and only
+        # from the outermost call - a redirector's nested destination
+        # is examined once, not recursively chained indefinitely.
+        if _nested_depth == 0:
+            nested = _extract_nested_destination(url)
+            if nested:
+                nested_result = analyze_url(nested, _nested_depth=1)
+
+                # Legitimate ESP/marketing redirectors routinely wrap a
+                # destination URL in parameters such as `url=` or `next=`.
+                # The outer redirect pattern alone is therefore NOT enough
+                # to call the message suspicious when the outer host is a
+                # known ESP and the nested destination itself is benign.
+                # Only retain the high-confidence redirect signal in that
+                # case when the nested destination independently contains a
+                # strong phishing indicator.
+                nested_strong_flags = {
+                    "brand_lookalike_domain",
+                    "uri_userinfo_obfuscation",
+                    "punycode_domain",
+                    "ip_as_hostname",
+                    "missing_hostname",
+                    "suspicious_action_keywords",
+                }
+                nested_is_strong = bool(
+                    nested_strong_flags.intersection(nested_result["flags"])
+                )
+
+                if (
+                    not _is_known_esp_host(hostname)
+                    or nested_is_strong
+                ):
+                    flags.append("redirector_with_nested_destination")
+                    score += 20
+                    if nested_result["flags"]:
+                        flags.append("nested_destination_suspicious")
+                        score += min(nested_result["local_score"] // 2, 20)
 
         if len(url) > 200:
             flags.append("very_long_url")

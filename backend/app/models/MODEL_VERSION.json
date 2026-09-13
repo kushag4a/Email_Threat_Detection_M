@@ -1,0 +1,15 @@
+{
+  "version": "v2",
+  "model": "LinearSVC + CalibratedClassifierCV",
+  "vectorizer": "TfidfVectorizer",
+  "training_sources": [
+    "seven-phishing-email-datasets",
+    "zefang-liu/phishing-email-dataset",
+    "Navyasri17/phishing_emails-data"
+  ],
+  "training_date": "2026-09-13",
+  "language": "en",
+  "max_features": 50000,
+  "ngram_range": [1, 2],
+  "random_state": 42
+}

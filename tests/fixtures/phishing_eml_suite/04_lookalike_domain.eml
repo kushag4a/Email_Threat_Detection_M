@@ -1,0 +1,15 @@
+From: Google Workspace Admin <admin@goog1e-security.example-attacker.test>
+To: user@example-company.test
+Date: Fri, 11 Sep 2026 10:12:26 +0530
+Subject: Security notice: unusual sign-in detected
+Message-ID: <20260911101226.004@example-attacker.test>
+Reply-To: admin@goog1e-security.example-attacker.test
+MIME-Version: 1.0
+Content-Type: text/html; charset=UTF-8
+
+<html><body>
+<p>We detected an unusual sign-in to your mailbox.</p>
+<p>Review recent activity to keep your account secure:</p>
+<p><a href="https://goog1e-security.example-attacker.test/login">Review sign-in</a></p>
+<p>[SYNTHETIC TEST MESSAGE]</p>
+</body></html>

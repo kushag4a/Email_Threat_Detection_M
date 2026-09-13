@@ -104,11 +104,20 @@ def classify_email(analysis_text: str, *, force_rule_based: bool = False) -> dic
         for category, probability in zip(threat_classes, threat_probabilities)
     }
 
+    # BUG FIX (rule-based detection previously gated behind ML
+    # confidence - see MERGE_LOG.md Task 3): detect_threats() is a
+    # cheap keyword scan (a handful of `in` checks over the message
+    # text), not an expensive deep scan, so there is no performance
+    # reason to skip it. Gating it behind phishing_probability >= 40%
+    # meant a message the ML model was unsure about never got scanned
+    # for BEC/credential-theft/financial-fraud keyword patterns at all,
+    # silently dropping a whole independent evidence source exactly
+    # when the model's own signal was weakest. It now always runs;
+    # `forensics_triggered` is kept as an informational flag (also
+    # still forced True by a high-severity attachment finding) rather
+    # than as a gate on rule_based_threats.
     forensics_triggered = phishing_probability >= FORENSICS_TRIGGER_THRESHOLD or force_rule_based
-
-    rule_based_threats = {}
-    if forensics_triggered:
-        rule_based_threats = detect_threats(analysis_text)
+    rule_based_threats = detect_threats(analysis_text)
 
     top_category = max(threat_categories, key=threat_categories.get)
 
