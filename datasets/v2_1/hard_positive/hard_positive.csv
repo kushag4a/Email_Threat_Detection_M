@@ -1,0 +1,31 @@
+text,label
+"Subject: Payroll update required
+
+Your payroll profile requires a routine confirmation before the next processing cycle. Review your employee payment details using the secure employee portal. If no action is taken, processing may be delayed.",1
+"Subject: Account review
+
+We noticed a recent change associated with your account. Please complete the verification step using the account review page so that access remains available without interruption.",1
+"Subject: Document access notification
+
+A shared document requires your confirmation. Open the document review page and sign in to confirm access before the request expires.",1
+"Subject: Payment information confirmation
+
+Your payment profile is scheduled for an internal review. Confirm the current banking information through the secure verification page before the next settlement cycle.",1
+"Subject: Security confirmation requested
+
+A routine security validation is pending for your account. Continue to the account security page and complete the requested confirmation.",1
+"Subject: Employee benefits update
+
+Your employee benefits record requires confirmation. Review the latest changes and authenticate through the employee portal before the deadline.",1
+"Subject: Invoice processing notice
+
+An invoice associated with your organization is awaiting confirmation. Review the invoice through the provided document portal and complete the required approval step.",1
+"Subject: Microsoft account review
+
+Your organizational account requires a security review. Continue through the account verification portal and confirm your identity before the review window closes.",1
+"Subject: Urgent document review
+
+A document associated with your account is waiting for review. Use the secure document portal to authenticate and complete the review.",1
+"Subject: Banking profile confirmation
+
+Your organization banking profile has a pending confirmation request. Review the requested information through the secure banking portal before processing resumes.",1
