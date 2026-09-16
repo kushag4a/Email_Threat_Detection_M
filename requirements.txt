@@ -28,3 +28,17 @@ itsdangerous
 # Attachment security scanning (Attachment Security Engine)
 # Gracefully degrades if unavailable - see backend/app/security/yara/scanner.py
 yara-python
+
+# ---------------------------------------------------------------------------
+# NLLB Multilingual Translation Prototype (ValorProtects)
+# These are PROTOTYPE-ONLY dependencies. Production scans do not import them.
+# torch (CPU-only build) is ~800 MB; the NLLB model weights are ~2.4 GB.
+# ---------------------------------------------------------------------------
+# Transformer model loading (AutoTokenizer + AutoModelForSeq2SeqLM)
+transformers>=4.40.0
+
+# Deep learning runtime (CPU default; GPU if CUDA available)
+torch
+
+# NLLB-200 uses the SentencePiece-based tokenizer
+sentencepiece

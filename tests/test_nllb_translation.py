@@ -395,14 +395,19 @@ class TestTranslationResultContract:
 
 class TestGenerationParameters:
     """
-    Verify that _run_inference() uses GenerationConfig with max_new_tokens
-    as the sole output bound, and that max_length is never simultaneously set.
+    Verify that _run_inference() calls model.generate() with max_new_tokens as
+    a direct kwarg and that max_length is NOT passed to generate() at all.
 
-    Motivation: the NLLB model ships with a generation_config.json that sets
-    max_length (typically 200). Transformers >= 4.38 raises a ValueError when
-    both max_new_tokens and a non-None max_length are in the effective config.
-    The fix routes both generation params through an explicit GenerationConfig
-    where max_length is left None, fully superseding the model default.
+    Root-cause fix summary
+    ----------------------
+    The NLLB model's generation_config.json sets max_length=200.  When
+    model.generate() merges the model's own generation_config with any kwargs,
+    it drops None values, so passing max_length=None externally does NOT
+    suppress the model's 200.  The definitive fix clears max_length on the
+    model's own generation_config object immediately after loading (in
+    _load_model), so it can never be reintroduced through the merge.
+    _run_inference() then passes max_new_tokens as a direct kwarg -- clean and
+    free of the conflict.
     """
 
     @pytest.fixture(autouse=True)
@@ -436,64 +441,226 @@ class TestGenerationParameters:
         from backend.app.multilingual.nllb_translator import _run_inference
         _run_inference("आपका खाता लॉक है", "hin_Deva")
 
-    def test_generate_receives_generation_config(self):
-        """generate() must be called with a generation_config kwarg."""
+    def test_generate_called(self):
+        """model.generate() must be called exactly once per _run_inference() call."""
         self._call_run_inference()
-        call_kwargs = self.mock_model.generate.call_args.kwargs
-        assert "generation_config" in call_kwargs, (
-            "model.generate() must receive a generation_config= argument; "
-            "bare max_new_tokens= is no longer acceptable."
-        )
+        self.mock_model.generate.assert_called_once()
 
-    def test_generation_config_has_max_new_tokens(self):
-        """GenerationConfig.max_new_tokens must equal MAX_OUTPUT_TOKENS."""
+    def test_generate_has_max_new_tokens_kwarg(self):
+        """max_new_tokens must appear as a direct kwarg to generate()."""
         from backend.app.multilingual.config import MAX_OUTPUT_TOKENS
         self._call_run_inference()
-        gen_cfg = self.mock_model.generate.call_args.kwargs["generation_config"]
-        assert gen_cfg.max_new_tokens == MAX_OUTPUT_TOKENS, (
+        call_kwargs = self.mock_model.generate.call_args.kwargs
+        assert "max_new_tokens" in call_kwargs, (
+            "model.generate() must receive max_new_tokens= as a direct kwarg"
+        )
+        assert call_kwargs["max_new_tokens"] == MAX_OUTPUT_TOKENS, (
             f"Expected max_new_tokens={MAX_OUTPUT_TOKENS}, "
-            f"got {gen_cfg.max_new_tokens}"
+            f"got {call_kwargs['max_new_tokens']}"
         )
 
-    def test_generation_config_max_length_is_none(self):
+    def test_generate_has_no_max_length_kwarg(self):
         """
-        GenerationConfig.max_length must be None.
+        max_length must NOT appear as a kwarg to generate().
 
-        A non-None max_length alongside max_new_tokens triggers the conflict
-        that this fix addresses (transformers >= 4.38 ValueError).
-        """
-        self._call_run_inference()
-        gen_cfg = self.mock_model.generate.call_args.kwargs["generation_config"]
-        assert gen_cfg.max_length is None, (
-            f"GenerationConfig.max_length must be None (not {gen_cfg.max_length!r}); "
-            "setting it would conflict with max_new_tokens in transformers >= 4.38."
-        )
-
-    def test_generate_has_no_raw_max_length_kwarg(self):
-        """
-        max_length must not be passed as a bare kwarg to generate().
-
-        It must only be set on the tokenizer call (for input truncation),
-        never on the generation call.
+        The conflict prevention is done by clearing _model.generation_config.max_length
+        in _load_model(), not by passing max_length here.  Passing max_length here
+        would re-introduce the conflict for callers that inspect both.
         """
         self._call_run_inference()
         call_kwargs = self.mock_model.generate.call_args.kwargs
         assert "max_length" not in call_kwargs, (
-            "max_length must not appear as a direct kwarg to model.generate(); "
-            "it belongs only on the tokenizer call."
+            "max_length must not appear as a kwarg to model.generate(); "
+            "it is suppressed at the model's generation_config level in _load_model()."
         )
 
-    def test_generate_has_no_raw_max_new_tokens_kwarg(self):
-        """
-        max_new_tokens must not be passed as a bare kwarg to generate() either.
-
-        It must live inside GenerationConfig, not alongside it, to avoid a
-        second form of the same conflict.
-        """
+    def test_generate_has_forced_bos_token_id(self):
+        """forced_bos_token_id must be passed so the model decodes to English."""
         self._call_run_inference()
         call_kwargs = self.mock_model.generate.call_args.kwargs
-        assert "max_new_tokens" not in call_kwargs, (
-            "max_new_tokens must not appear as a bare kwarg to generate(); "
-            "it must be set on GenerationConfig instead."
+        assert "forced_bos_token_id" in call_kwargs, (
+            "model.generate() must receive forced_bos_token_id= to select English output"
         )
+        assert call_kwargs["forced_bos_token_id"] == 256047
+
+    def test_load_model_clears_generation_config_max_length(self):
+        """
+        _load_model() must set model.generation_config.max_length = None after
+        loading the model.
+
+        This is the definitive fix for the "Both max_new_tokens and max_length
+        are set" warning: the model's saved generation_config.json has
+        max_length=200, and transformers' merge algorithm drops None values from
+        passed kwargs/GenerationConfig objects, so clearing the conflict at its
+        source (the model object itself) is the only reliable approach.
+        """
+        import torch
+        from types import SimpleNamespace
+
+        mock_tok = MagicMock(name="tok")
+        mock_model = MagicMock(name="model")
+        # generation_config must be a real SimpleNamespace so attribute assignment works
+        # (MagicMock silently swallows attribute sets without storing them)
+        mock_model.generation_config = SimpleNamespace(max_length=200)
+        mock_model.to.return_value = mock_model
+
+        import backend.app.multilingual.nllb_translator as tm
+        # AutoTokenizer and AutoModelForSeq2SeqLM are locally imported inside
+        # _load_model via `from transformers import ...`, so patch at the source.
+        with patch("transformers.AutoTokenizer") as mt, \
+             patch("transformers.AutoModelForSeq2SeqLM") as mm, \
+             patch("backend.app.multilingual.nllb_translator._resolve_device",
+                   return_value=torch.device("cpu")):
+            mt.from_pretrained.return_value = mock_tok
+            mm.from_pretrained.return_value = mock_model
+            tm._tokenizer = None
+            tm._model = None
+            tm._device = None
+
+            from backend.app.multilingual.nllb_translator import _load_model
+            _load_model()
+
+        assert mock_model.generation_config.max_length is None, (
+            "_load_model() must clear model.generation_config.max_length to None "
+            "so the model's saved max_length=200 cannot conflict with max_new_tokens "
+            "during generate()."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Test: device resolution (_resolve_device)
+#
+# _resolve_device() is a module-level helper so we can test it directly by
+# patching backend.app.multilingual.nllb_translator.DEVICE_MODE and
+# torch.cuda.is_available.  No model is loaded; no GPU is needed.
+# ---------------------------------------------------------------------------
+
+class TestDeviceResolution:
+    """
+    Verify _resolve_device() honours DEVICE_MODE for all three modes.
+
+    All three modes are tested against both cuda-available and cuda-absent
+    environments by patching torch.cuda.is_available in the translator module.
+    """
+
+    def _resolve(self, device_mode: str, cuda_available: bool) -> "torch.device":
+        """Patch DEVICE_MODE and cuda availability, then call _resolve_device()."""
+        import backend.app.multilingual.nllb_translator as tm
+        from backend.app.multilingual.nllb_translator import _resolve_device
+
+        # _resolve_device() does `import torch` locally, so we patch
+        # torch.cuda.is_available at the real torch module level.
+        with patch.object(tm, "DEVICE_MODE", device_mode), \
+             patch("torch.cuda.is_available", return_value=cuda_available):
+            return _resolve_device()
+
+    # --- auto mode ---
+
+    def test_auto_cuda_available_returns_cuda(self):
+        result = self._resolve("auto", cuda_available=True)
+        assert result.type == "cuda"
+
+    def test_auto_cuda_unavailable_returns_cpu(self):
+        result = self._resolve("auto", cuda_available=False)
+        assert result.type == "cpu"
+
+    # --- cpu mode ---
+
+    def test_cpu_mode_returns_cpu_when_cuda_available(self):
+        """cpu mode must ignore CUDA availability entirely."""
+        result = self._resolve("cpu", cuda_available=True)
+        assert result.type == "cpu"
+
+    def test_cpu_mode_returns_cpu_when_cuda_unavailable(self):
+        result = self._resolve("cpu", cuda_available=False)
+        assert result.type == "cpu"
+
+    # --- cuda mode ---
+
+    def test_cuda_mode_returns_cuda_when_available(self):
+        result = self._resolve("cuda", cuda_available=True)
+        assert result.type == "cuda"
+
+    def test_cuda_mode_raises_when_unavailable(self):
+        """
+        Requesting cuda when CUDA is absent must raise RuntimeError with a
+        clear message, not silently fall back to CPU.
+        """
+        import pytest
+        with pytest.raises(RuntimeError, match="torch.cuda.is_available\\(\\) returned False"):
+            self._resolve("cuda", cuda_available=False)
+
+    def test_cuda_failure_surfaces_as_translation_failed(self):
+        """
+        When DEVICE_MODE=cuda and CUDA is absent, translate() must return
+        TRANSLATION_FAILED (not raise) because the RuntimeError from
+        _resolve_device() is caught by translate()'s except clause.
+        """
+        import backend.app.multilingual.nllb_translator as tm
+
+        with patch.object(tm, "DEVICE_MODE", "cuda"), \
+             patch("backend.app.multilingual.nllb_translator._ensure_loaded",
+                   side_effect=RuntimeError(
+                       "NLLB_MODEL_DEVICE=cuda was requested but "
+                       "torch.cuda.is_available() returned False."
+                   )):
+            result = translate("आपका खाता", src_lang="hin_Deva")
+
+        assert result.status == TranslationStatus.TRANSLATION_FAILED
+        assert result.success is False
+        assert "cuda" in (result.error or "").lower()
+
+
+# ---------------------------------------------------------------------------
+# Test: load_nllb_env() convention
+# ---------------------------------------------------------------------------
+
+class TestEnvLoading:
+    """
+    Verify the load_nllb_env() helper:
+      - Is a no-op when python-dotenv is absent (ImportError path).
+      - Calls load_dotenv() with the correct .env path when dotenv is present.
+      - Passes override=False so existing env vars are never overwritten.
+    """
+
+    def test_load_nllb_env_is_noop_without_dotenv(self):
+        """If dotenv import fails, load_nllb_env() must not raise."""
+        import builtins
+        real_import = builtins.__import__
+
+        def _blocking_import(name, *args, **kwargs):
+            if name == "dotenv":
+                raise ImportError("dotenv not installed")
+            return real_import(name, *args, **kwargs)
+
+        with patch.object(builtins, "__import__", side_effect=_blocking_import):
+            from backend.app.multilingual.config import load_nllb_env
+            # Must not raise
+            load_nllb_env()
+
+    def test_load_nllb_env_calls_load_dotenv_with_correct_path(self, tmp_path):
+        """load_nllb_env() must call load_dotenv(dotenv_path=<project>/.env, override=False)."""
+        from backend.app.multilingual.config import load_nllb_env, _PROJECT_ROOT
+
+        # load_dotenv is imported inside load_nllb_env(), so patch it at its
+        # source module (dotenv) rather than as a config attribute.
+        with patch("dotenv.load_dotenv") as mock_ld, \
+             patch("pathlib.Path.exists", return_value=True):
+            load_nllb_env()
+
+        mock_ld.assert_called_once()
+        call_kwargs = mock_ld.call_args.kwargs
+        assert call_kwargs.get("override") is False, (
+            "load_dotenv must use override=False so existing env vars are not overwritten"
+        )
+        assert "dotenv_path" in call_kwargs
+
+    def test_load_nllb_env_skips_dotenv_when_env_absent(self):
+        """load_nllb_env() must not call load_dotenv() when .env does not exist."""
+        with patch("dotenv.load_dotenv") as mock_ld, \
+             patch("pathlib.Path.exists", return_value=False):
+            from backend.app.multilingual.config import load_nllb_env
+            load_nllb_env()
+
+        mock_ld.assert_not_called()
 

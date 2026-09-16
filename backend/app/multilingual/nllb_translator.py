@@ -48,6 +48,7 @@ from enum import Enum
 
 from backend.app.multilingual.config import (
     CACHE_DIR,
+    DEVICE_MODE,
     ENABLED,
     MAX_INPUT_TOKENS,
     MAX_OUTPUT_TOKENS,
@@ -153,6 +154,40 @@ _model = None
 _device = None
 
 
+def _resolve_device() -> "torch.device":
+    """
+    Resolve the torch device from DEVICE_MODE (set by NLLB_MODEL_DEVICE in .env).
+
+    Modes
+    -----
+    auto  (default) -- CUDA when torch.cuda.is_available(), else CPU.
+                       Never fails.
+    cpu             -- CPU unconditionally, even when CUDA is present.
+    cuda            -- CUDA unconditionally.  Raises RuntimeError with a clear
+                       message if torch.cuda.is_available() returns False, so
+                       the failure surfaces as a structured TRANSLATION_FAILED
+                       result rather than a silent wrong-device run.
+
+    This function is module-level so tests can patch it or call it directly.
+    """
+    import torch
+
+    if DEVICE_MODE == "cpu":
+        return torch.device("cpu")
+
+    if DEVICE_MODE == "cuda":
+        if not torch.cuda.is_available():
+            raise RuntimeError(
+                "NLLB_MODEL_DEVICE=cuda was requested but "
+                "torch.cuda.is_available() returned False. "
+                "Set NLLB_MODEL_DEVICE=auto or NLLB_MODEL_DEVICE=cpu."
+            )
+        return torch.device("cuda")
+
+    # "auto" (and any other validated value that slips through)
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
 def _load_model() -> None:
     """
     Download (first time) or load from cache the tokenizer and model.
@@ -163,15 +198,26 @@ def _load_model() -> None:
     import torch
     from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
-    _device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    _device = _resolve_device()
     logger.info(
-        "NLLB: loading tokenizer  model=%s  cache=%s", MODEL_NAME, CACHE_DIR
+        "NLLB: loading tokenizer  model=%s  cache=%s  device_mode=%s  device=%s",
+        MODEL_NAME, CACHE_DIR, DEVICE_MODE, _device,
     )
     _tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, cache_dir=CACHE_DIR)
     logger.info("NLLB: loading model  device=%s", _device)
     _model = AutoModelForSeq2SeqLM.from_pretrained(MODEL_NAME, cache_dir=CACHE_DIR)
     _model = _model.to(_device)
     _model.eval()
+
+    # The model's saved generation_config.json sets max_length=200.
+    # When model.generate() merges that with our max_new_tokens kwarg, both end
+    # up active, triggering the "Both max_new_tokens and max_length are set"
+    # warning in transformers >= 4.38.  Clearing max_length on the model's own
+    # generation_config here -- before any generate() call -- removes the
+    # conflict at its source.  max_new_tokens passed to generate() is then the
+    # sole output-length bound.
+    _model.generation_config.max_length = None
+
     logger.info("NLLB: model ready")
 
 
@@ -211,22 +257,19 @@ def _run_inference(masked_text: str, src_lang: str) -> str:
 
     Generation bound
     ----------------
-    Output length is controlled exclusively by MAX_OUTPUT_TOKENS via
-    GenerationConfig.max_new_tokens.  max_length is explicitly left None so
-    the model's bundled generation_config.json default (typically 200 for
-    NLLB) is fully superseded.  Passing both max_new_tokens and a non-None
-    max_length simultaneously raises a ValueError in transformers >= 4.38;
-    this design avoids that conflict entirely.
+    Output length is controlled exclusively by MAX_OUTPUT_TOKENS via the
+    max_new_tokens= kwarg.  max_length is not passed here; it has already been
+    cleared on the model's own generation_config in _load_model() so it cannot
+    be reintroduced through the merge that model.generate() performs internally.
 
     Precondition: _ensure_loaded() must have been called before this function.
     """
     import torch  # local import: only executed when inference actually runs
-    from transformers import GenerationConfig
 
     device = _device if _device is not None else torch.device("cpu")
 
     # Tokenizer max_length bounds the INPUT sequence (truncation).
-    # It is intentionally separate from the generation bound below.
+    # Intentionally separate from the generation bound below.
     inputs = _tokenizer(
         masked_text,
         return_tensors="pt",
@@ -235,16 +278,12 @@ def _run_inference(masked_text: str, src_lang: str) -> str:
         max_length=MAX_INPUT_TOKENS,
     ).to(device)
 
-    # Build a fresh GenerationConfig that sets ONLY max_new_tokens.
-    # max_length is left None here, which overrides any value baked into the
-    # model's own generation_config.json and removes the conflict warning.
-    gen_config = GenerationConfig(
-        forced_bos_token_id=_tokenizer.convert_tokens_to_ids(ENGLISH_TAG),
-        max_new_tokens=MAX_OUTPUT_TOKENS,
-    )
-
     with torch.no_grad():
-        translated_tokens = _model.generate(**inputs, generation_config=gen_config)
+        translated_tokens = _model.generate(
+            **inputs,
+            forced_bos_token_id=_tokenizer.convert_tokens_to_ids(ENGLISH_TAG),
+            max_new_tokens=MAX_OUTPUT_TOKENS,
+        )
 
     return _tokenizer.batch_decode(translated_tokens, skip_special_tokens=True)[0]
 
