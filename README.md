@@ -1,400 +1,296 @@
-🛡️ ValorProtects
+<div align="center">
 
-AI-Powered Email Threat Detection, Geolocation & Forensic Intelligence Platform
+# 🛡️ ValorProtects
 
-ValorProtects is a provider-independent email security platform built around a FastAPI backend and an analyst-focused dashboard. It analyzes Gmail/Microsoft mailbox messages or uploaded .eml evidence through a staged pipeline combining machine learning, email authentication/header analysis, URL and attachment inspection, threat intelligence, geolocation/infrastructure context, BEC detection, and explainable risk scoring.
+### AI-Powered Email Threat Detection, Geolocation & Forensic Intelligence
 
-Security principle: email is treated as hostile evidence. Attachments are inspected without execution, and message-originated remote resources are not executed as part of analysis.
+Provider-independent email security research platform combining machine learning, authentication analysis, threat intelligence, and explainable risk scoring — built on FastAPI with an analyst-facing dashboard.
 
-✨ What ValorProtects Detects
+<p>
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.x-blue.svg">
+  <img alt="Backend" src="https://img.shields.io/badge/Backend-FastAPI-009688.svg">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-384%20passing-brightgreen.svg">
+  <img alt="Status" src="https://img.shields.io/badge/status-active%20R%26D-yellow.svg">
+</p>
 
-ValorProtects keeps different threat classes conceptually separate:
+[Architecture](ARCHITECTURE.md) · [Project Context](PROJECT_CONTEXT.md) · [Quick Start](#-quick-start) · [Roadmap](#-roadmap)
 
-Phishing / credential theft — production V2 text classifier
+</div>
 
-BEC / financial fraud — deterministic behavioral and phrase-based detection
+---
 
-Brand impersonation / lookalike domains
+## 📋 Table of Contents
 
-Authentication spoofing — SPF, DKIM, DMARC and related identity signals
+- [The Problem](#-the-problem)
+- [How ValorProtects Works](#-how-valorprotects-works)
+- [AI Detection Architecture](#-ai-detection-architecture)
+- [Multilingual / Indic Email Support](#-multilingual--indic-email-support)
+- [Production ML Model](#-production-ml-model)
+- [Security & Privacy Design](#-security--privacy-design)
+- [Mailbox Support](#-mailbox-support)
+- [Quick Start](#-quick-start)
+- [Testing](#-testing)
+- [Project Structure](#-project-structure)
+- [Known Limitations](#-known-limitations)
+- [Roadmap](#-roadmap)
+- [Documentation](#-documentation)
+- [Project Status](#-project-status)
 
-Malicious redirects and URL obfuscation
+---
 
-Malware / suspicious attachments — file-type/magic-byte inspection and YARA
+## 🎯 The Problem
 
-Threat-intelligence matches — local PhishTank / Spamhaus data
+Most email security tools make a decision based on a single weak signal — one phishing probability score, one URL reputation check, or one authentication result. Each of these, on its own, is easy to spoof or wrong often enough to matter:
 
-Suspicious infrastructure / origin context — geolocation and related evidence
+- A phishing model can be fooled by a short, sparse, mostly-legitimate message.
+- SPF/DKIM/DMARC can pass while the *content* is still malicious.
+- A URL check can miss a brand-new or freshly-registered malicious domain.
+- None of these alone tell you *why* a message is dangerous.
 
-These signals are combined by the explainable risk engine rather than treating one ML probability as the final security decision.
+ValorProtects treats each of these as **independent evidence**, not a final verdict. Header/authentication analysis, attachment inspection, AI text classification, URL and threat-intel lookups, geolocation/infrastructure context, and BEC-specific heuristics are combined by an **explainable risk engine**, so the final score always comes with the evidence behind it.
 
-🧭 Analysis Pipeline
+Security principle: **email is treated as hostile evidence**. Attachments are inspected — magic bytes, hashes, YARA — without being executed, and message-originated remote resources are never executed as part of analysis.
 
-Browser / Dashboard
-        │
-        ▼
-     FastAPI
-        │
-        ├── Gmail / Microsoft provider
-        │
-        └── .eml upload
-                │
-                ▼
-       Canonical email parser
-                │
-                ▼
-      Conditional attachment scan
-       (only when attachments exist)
-                │
-                ▼
-      Header / authentication analysis
-      SPF • DKIM • DMARC • identity
-                │
-                ▼
-       AI phishing classification
-                │
-                ├── Production V2
-                │
-                └── Indic NLLB advisory path
-                │
-                ▼
-       Threat intelligence / URLs
-                │
-                ▼
-       Geo / infrastructure context
-                │
-                ▼
-          BEC detection
-                │
-                ▼
-        Explainable risk engine
-                │
-                ▼
-       Threat types + evidence
-       + score + severity
-       + recommended action
+---
 
-🧠 Production ML Model
+## 🧭 How ValorProtects Works
 
-The production phishing classifier is V2:
+```mermaid
+flowchart TD
+    A["📥 Gmail / Microsoft / .eml upload"] --> B["⚙️ FastAPI"]
+    B --> C["🧩 Canonical Email Parser"]
+    C --> D{"📎 Has attachment?"}
+    D -->|No| E["🔐 Header & Authentication Analysis<br/>SPF · DKIM · DMARC"]
+    D -->|Yes| F["🛡️ Attachment Security Engine<br/>Magic bytes → SHA-256 → YARA"]
+    F --> E
+    E --> G["🧠 AI Threat Classification<br/>(language-aware, see below)"]
+    G --> H["🔗 URL / Threat Intelligence<br/>PhishTank · Spamhaus · local heuristics"]
+    H --> I["🌍 Geolocation / Infrastructure Context"]
+    I --> J["💼 BEC Detection"]
+    J --> K["📊 Explainable Risk Engine"]
+    K --> L["🚨 Threat types + evidence + score + severity + recommended action"]
+```
 
-backend/app/models/v2/
+A high-severity attachment finding (executable extension, macro-enabled document, disguised double extension, magic-byte mismatch, or a YARA match) conditionally forces a deeper rule-based scan at the AI stage — even when the ML phishing probability alone is low. A YARA high/medium match also forces a risk floor in the composite engine, so a blandly-worded email body can't dilute away real attachment evidence.
 
-V2 uses TF-IDF text features with a calibrated linear classifier.
+---
 
-Previously evaluated model versions include V1 and V2.1, but V2 is the current production model. V2.1 was an experimental hard-mining variant and is not promoted to production.
+## 🧠 AI Detection Architecture
 
-The repository intentionally does not retrain or silently replace the production model during application execution.
+Detection is split into independent detectors that all feed the same risk engine, rather than one model trying to catch everything:
 
-🌏 Indic Multilingual NLLB Evaluation
+```mermaid
+flowchart TD
+    EMAIL["📧 Email"] --> P["🧠 Phishing / Credential Theft<br/>Production V2"]
+    EMAIL --> S["🚧 Spam Model<br/>(in development)"]
+    EMAIL --> D["🔒 Deterministic Security<br/>Header/Auth · Attachments · YARA · Threat Intel · BEC"]
+    P --> R["📊 Risk Engine"]
+    S --> R
+    D --> R
+    R --> X["✅ Explainable Result"]
+```
 
-ValorProtects includes an offline research/evaluation path for Indic-language email.
+The design intentionally keeps **phishing ≠ spam ≠ malware ≠ BEC** as separate signals rather than forcing every threat type through one classifier. The spam model is under active development and is not yet part of the production risk score.
 
-The experiment compares:
+---
 
-Path A:
-Indic text ───────────────► V2
+## 🌏 Multilingual / Indic Email Support
 
-Path B:
-Indic text ─► NLLB-200 ─► English ─► V2
+Earlier versions of the phishing classifier only understood English, so non-English email had no reliable coverage. The current pipeline handles Indic-language email two ways:
 
-The NLLB path is advisory/prototype-only. It does not alter the live risk score or production scan result.
+- **Path A — Direct:** the production V2 model has been retrained on a multilingual synthetic dataset covering 11 Indic languages, so it can classify Indic-language email directly, without translation.
+- **Path B — Translate, then classify:** the email is translated to English with **NLLB-200 (distilled, 600M)** and then run through the same V2 model, so the result can be compared against Path A.
 
-Evaluation dataset
+```mermaid
+flowchart LR
+    IN["📧 Indic-language email"] --> A["Path A: Direct → V2"]
+    IN --> B["Path B: NLLB-200 → English → V2"]
+    A --> CMP["⚖️ Compare A / B"]
+    B --> CMP
+```
 
-datasets/evaluation/indic/indic_eval.csv
+**Device-adaptive execution:** running NLLB on a low-resource device can be slow enough to block analysis, so on those devices NLLB is disabled by default and the email goes straight through Path A. Devices with enough headroom run both paths and compare them.
 
-The current benchmark contains:
+### Evaluation dataset
 
-1,100 samples
+`datasets/evaluation/indic/indic_eval.csv` — 1,100 samples, 100 per language, 11 languages (605 legitimate / 495 phishing), synthetic/template-derived and **not yet native-speaker reviewed**:
 
-100 samples per language
-
-11 Indic languages
-
-605 legitimate
-
-495 phishing
-
-all rows marked as synthetic
-
-Languages:
-
+```
 hin_Deva  tel_Telu  tam_Taml  kan_Knda  mal_Mlym
 mar_Deva  ben_Beng  guj_Gujr  ory_Orya  pan_Guru
 urd_Arab
+```
 
-Validate the dataset:
+### Current benchmark result
 
-.\.venv\Scripts\python.exe scriptsalidate_indic_eval_dataset.py
+| Metric | Path A: Indic → V2 | Path B: Indic → NLLB → English → V2 |
+|---|---|---|
+| Accuracy | 79.73% | 85.00% |
+| Precision | 72.52% | 83.54% |
+| Recall | 88.48% | 83.03% |
+| F1 | 79.71% | 83.28% |
 
-Run a small smoke test:
+- **Accuracy** — how many predictions were correct overall.
+- **Precision** — when the system says "phishing," how often is it actually phishing?
+- **Recall** — of all the actual phishing emails, how many did it catch?
+- **F1** — a combined measure of precision and recall.
 
+These numbers are **benchmark-specific, synthetic-data results**, not production accuracy claims.
+
+<details>
+<summary>Why "paired" evaluation matters</summary>
+
+The comparison isn't 100 different emails through Path A and a different 100 through Path B — it's the *same* email through both paths (`Email #123 → A` and `Email #123 → B`), so A-vs-B deltas are computed only over samples where both paths produced a prediction. The evaluator keeps failed operations separate from legitimate predictions, reports pooled and macro-averaged metrics, runs McNemar's test where applicable, and records source/translated text for inspection.
+
+Run it yourself:
+```bash
+.\.venv\Scripts\python.exe scripts\validate_indic_eval_dataset.py
 .\.venv\Scripts\python.exe scripts\evaluate_indic_nllb.py --lang hin_Deva --max-per-lang 3
-
-Run the full benchmark:
-
 .\.venv\Scripts\python.exe scripts\evaluate_indic_nllb.py
+```
+Results are written to `datasets/evaluation/indic/results/`.
+</details>
 
-Results are written to:
+---
 
-datasets/evaluation/indic/results/
+## 🧠 Production ML Model
 
-The benchmark records per-language results, pooled and macro metrics, paired A/B outcomes, McNemar analysis, latency, failures, and per-sample translated English text for inspection.
+The production phishing classifier is **V2** (`backend/app/models/v2/`): TF-IDF text features (1–2 grams, 50,000 max features) with a calibrated linear classifier (LinearSVC + CalibratedClassifierCV). On its evaluation set, V2 currently reaches **99.3% accuracy** — a separate figure from the Indic multilingual benchmark above, which uses a smaller synthetic dataset built specifically to compare the direct vs. translate-then-classify paths.
 
-Current benchmark result
+**V2.1** was evaluated as an experimental hard-mining variant and was **not promoted** to production.
 
-The current 1,100-sample run produced:
+The application does not retrain or silently replace the production model during execution.
 
-Metric
+---
 
-Path A: Indic → V2
+## 🔐 Security & Privacy Design
 
-Path B: Indic → NLLB → English → V2
+- OAuth tokens stay server-side; they are never exposed to frontend JavaScript.
+- OAuth callback `state` is verified for CSRF protection.
+- Cached/scanned mailbox data is scoped to the authenticated session, provider, account, and message — there's no global "current mailbox."
+- Threat intelligence (PhishTank, Spamhaus DROP) is bundled locally; the core pipeline needs no end-user API keys.
+- Attachments are analyzed — magic bytes, hash, YARA — without ever being executed.
+- Local secrets belong in `.env` and are never committed.
 
-Accuracy
+---
 
-79.73%
+## 📬 Mailbox Support
 
-85.00%
-
-Precision
-
-72.52%
-
-83.54%
-
-Recall
-
-88.48%
-
-83.03%
-
-F1
-
-79.71%
-
-83.28%
-
-The paired run had:
-
-1,100 / 1,100 successful Path A classifications
-
-1,100 / 1,100 successful translations
-
-1,100 / 1,100 successful Path B classifications
-
-1,100 / 1,100 paired samples
-
-These figures are benchmark-specific only. The dataset is synthetic and template-derived and has not been native-speaker reviewed. They must not be presented as production accuracy.
-
-🧪 Evaluation Methodology
-
-The same email is passed through both paths, making the comparison paired at the sample level.
-
-The evaluator:
-
-keeps failed operations separate from legitimate predictions
-
-exposes explicit evaluation denominators
-
-reports micro/pooled and macro averages
-
-computes paired disagreement counts
-
-runs McNemar's test when applicable
-
-measures baseline, translation, translated-classifier, and total Path B latency
-
-records source and translated text for diagnostic inspection
-
-produces reproducible JSON/CSV outputs
-
-Model-free evaluation tests live in:
-
-tests/test_indic_evaluation.py
-
-🔐 Security & Privacy Design
-
-OAuth tokens remain server-side and are not exposed to frontend JavaScript.
-
-OAuth callback state is verified for CSRF protection.
-
-Cached/scanned mailbox data is scoped to the authenticated session, provider, account, and message.
-
-Threat intelligence feeds are local; end users do not need their own threat-intel API keys for the core pipeline.
-
-Attachments are analyzed without executing them.
-
-The old sih.py IMAP-based architecture with hardcoded credentials is not used.
-
-Local secrets belong in .env and must never be committed.
-
-📬 Mailbox Support
-
-Gmail
-
-Configure a Google OAuth web application and use:
-
-http://localhost:8000/auth/google/callback
-
-Set:
-
+**Gmail** — Google OAuth (Authorization Code, web), `gmail.readonly` scope.
+```
 GOOGLE_CLIENT_ID
 GOOGLE_CLIENT_SECRET
-GOOGLE_REDIRECT_URI
+GOOGLE_REDIRECT_URI   # http://localhost:8000/auth/google/callback
+```
 
-Microsoft
-
-Configure an Azure app registration with delegated Microsoft Graph permissions:
-
-Mail.Read
-User.Read
-offline_access
-
-Callback:
-
-http://localhost:8000/auth/microsoft/callback
-
-Set:
-
+**Microsoft** — Azure app registration, delegated Microsoft Graph permissions (`Mail.Read`, `User.Read`, `offline_access`).
+```
 MICROSOFT_CLIENT_ID
 MICROSOFT_CLIENT_SECRET
-MICROSOFT_TENANT_ID
+MICROSOFT_TENANT_ID   # callback: http://localhost:8000/auth/microsoft/callback
+```
 
-⚡ Mailbox Pagination & Scanning
+**.eml upload** — works with zero configuration; the fastest way to try the analysis pipeline without OAuth.
 
-The dashboard supports page sizes of:
+---
 
-5 / 10 / 20 / 50 / 100
+## 🚀 Quick Start
 
-Provider-native pagination is used rather than downloading the full mailbox and slicing it locally.
-
-Inbox scans operate on the current page with bounded concurrency. A message that fails to parse or fetch does not abort the remainder of the batch; the dashboard reports the requested/analyzed/failed/skipped summary.
-
-🚀 Quick Start
-
-1. Create and activate a virtual environment
-
-Windows:
-
+```bash
+# 1. Create and activate a virtual environment (Windows)
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 
-2. Install dependencies
-
+# 2. Install dependencies
 pip install -r requirements.txt
 
-3. Create local configuration
-
+# 3. Create local configuration
 Copy-Item .env.example .env
+# fill in only the credentials/services you actually use
 
-Fill in only the credentials/services you actually use.
-
-4. Start ValorProtects
-
+# 4. Start ValorProtects
 uvicorn backend.app.main:app --reload --port 8000
+```
 
-Open:
+Open **http://localhost:8000** — you can use `.eml` upload mode without configuring OAuth.
 
-http://localhost:8000
+---
 
-You can use .eml upload mode without configuring OAuth.
+## 🧪 Testing
 
-🧪 Testing
-
-Run the complete test suite:
-
+```bash
 .\.venv\Scripts\python.exe -m pytest -q
+```
 
-The current release checkpoint has the complete regression suite passing.
+The current suite has **384 tests passing**. Focused suites include:
 
-Useful focused suites include:
+```bash
+.\.venv\Scripts\python.exe -m pytest tests/test_risk_engine_config.py -q
+.\.venv\Scripts\python.exe -m pytest tests/test_risk_scoring_safety.py -q
+.\.venv\Scripts\python.exe -m pytest tests/test_nllb_translation.py -q
+.\.venv\Scripts\python.exe -m pytest tests/test_indic_evaluation.py -q
+```
 
-.\.venv\Scripts\python.exe -m pytest tests	est_risk_engine_config.py -q
-.\.venv\Scripts\python.exe -m pytest tests	est_risk_scoring_safety.py -q
-.\.venv\Scripts\python.exe -m pytest tests	est_nllb_translation.py -q
-.\.venv\Scripts\python.exe -m pytest tests	est_indic_evaluation.py -q
+---
 
-📁 Important Project Areas
+## 📁 Project Structure
 
+```
 backend/
 └── app/
-    ├── multilingual/          # NLLB prototype
-    ├── models/v2/             # production V2 phishing model
-    ├── providers/             # Gmail / Microsoft providers
-    ├── services/              # parsing, analysis, BEC, scanning, risk
-    └── threat_intel/          # local threat-intelligence logic
+    ├── multilingual/     # NLLB translation path (Path B)
+    ├── models/v2/        # production V2 phishing model
+    ├── providers/        # Gmail / Microsoft providers
+    ├── services/         # parsing, analysis, BEC, scanning, risk engine
+    └── threat_intel/     # local threat-intelligence logic
 
-datasets/
-└── evaluation/
-    └── indic/                 # offline multilingual benchmark
+datasets/evaluation/indic/  # multilingual benchmark dataset + results
+scripts/                     # dataset generation / validation / benchmark runner
+tests/                       # regression and subsystem tests
+static/                      # dashboard assets
+```
 
-scripts/
-├── evaluate_indic_nllb.py
-├── generate_indic_eval_dataset.py
-└── validate_indic_eval_dataset.py
+For full contracts and rationale, see [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md), [ARCHITECTURE.md](ARCHITECTURE.md), and `MERGE_LOG.md`.
 
-tests/
-└── ...                        # regression and subsystem tests
+---
 
-static/
-└── ...                        # dashboard assets
+## ⚠️ Known Limitations
 
-For deeper architecture/contracts/limitations, see:
+- **In-memory storage only** — sessions, tokens, and scan results live in process memory; restarting the server clears everything.
+- **OAuth needs real credentials** — without them, Google/Microsoft login return a clear 503; `.eml` upload works with zero setup.
+- **Indic benchmark data is synthetic** and not yet native-speaker reviewed.
+- **NLLB's first inference** in a process includes model-loading cost, so median/p95 latency is more informative than a short-run mean.
+- **Spam model is still in development** and not part of the production risk score yet.
+- `scikit-learn` may emit an artifact-version warning when loading models trained under a slightly different patch version — this doesn't by itself mean loading failed.
+- **Microsoft provider** follows the documented Graph v1.0 contract but hasn't been exercised against a real tenant yet.
 
-PROJECT_CONTEXT.md
-ARCHITECTURE.md
-MERGE_LOG.md
+See [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) for the complete list.
 
-⚠️ Known Limitations
+---
 
-The Indic benchmark uses synthetic, template-derived emails.
+## 🔭 Roadmap
 
-The synthetic Indic text has not received native-speaker review.
+- [ ] Ship the spam-detection model as a first-class signal alongside phishing and deterministic security.
+- [ ] Expand Indic-language evaluation to real, native-reviewed data.
+- [ ] Evidence-based risk calibration once new signals have been evaluated.
+- [ ] Full analyst dashboard drill-down for every risk contribution.
+- [ ] Production hardening and release cleanup.
 
-NLLB translation quality is surfaced for inspection but is not independently scored against reference translations.
+---
 
-The first NLLB inference in a process includes model-loading cost, so median/p95 latency are more informative than a short-run mean.
+## 📚 Documentation
 
-OAuth integrations require real credentials for live mailbox access.
+- [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) — architecture, contracts, and limitations
+- [ARCHITECTURE.md](ARCHITECTURE.md) — system diagrams
+- `MERGE_LOG.md` — major merges/replacements and rationale
+- `datasets/evaluation/indic/README.md` — Indic dataset and benchmark methodology
 
-scikit-learn may emit artifact-version mismatch warnings when model files were produced under a slightly different patch version; this does not by itself indicate that loading failed.
+---
 
-NLLB remains an evaluation/prototype pathway and is not currently part of the production risk score.
+## ⚖️ Project Status
 
-A benchmark result on synthetic data is not a substitute for evaluation on real, native-reviewed email.
+ValorProtects is an academic/security-research and demonstration platform. Production-style controls are implemented for the local application, but benchmark figures — especially anything derived from synthetic evaluation data — should be read as engineering/research measurements, not claims about real-world detection rates.
 
-🔭 Roadmap
-
-Spam classification as a separate signal from phishing.
-
-Multilingual evaluation using real/native-reviewed data where legally and practically available.
-
-Evidence-based calibration only after new signals have been evaluated.
-
-Final analyst dashboard flow with drill-down explanations for every risk contribution.
-
-Production hardening and release cleanup.
-
-The design intentionally keeps:
-
-PHISHING ≠ SPAM ≠ MALWARE ≠ BEC
-
-rather than forcing every threat type into one classifier.
-
-📚 Documentation
-
-PROJECT_CONTEXT.md — architecture, contracts, and limitations
-
-ARCHITECTURE.md — system diagrams
-
-MERGE_LOG.md — major merges/replacements and rationale
-
-datasets/evaluation/indic/README.md — Indic dataset and benchmark methodology
-
-⚖️ Project Status
-
-ValorProtects is an academic/security-research and demonstration platform.
-
-Production-style security controls are implemented for the local application, but benchmark figures—especially those derived from synthetic evaluation data—should be treated as engineering/research measurements rather than claims about real-world detection rates.
+<div align="center">
+<sub>Built with FastAPI, scikit-learn, and NLLB-200.</sub>
+</div>
