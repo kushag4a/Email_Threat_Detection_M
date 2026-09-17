@@ -37,7 +37,9 @@ backend/app/models/v2_1/
 datasets/v2_1/
 
 
-
+# Large local training artifacts
+datasets/processed/combined_email_corpus.parquet
+datasets/processed/train.parquet
 
 
 
