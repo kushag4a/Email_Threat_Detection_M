@@ -57,6 +57,7 @@ class AttachmentInfo(BaseModel):
 class RiskResult(BaseModel):
     score: int
     level: str  # LOW | MEDIUM | HIGH | CRITICAL
+    threat_types: list[str] = Field(default_factory=list)
     reasons: list[str] = Field(default_factory=list)
     contributing_modules: list[str] = Field(default_factory=list)
 

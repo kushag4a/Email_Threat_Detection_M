@@ -1,12 +1,11 @@
 .env
 venv/
-__pycache__/
-*.pyc
 credentials.json
 token.json
 .venv/
 
 # Local backups / temporary debugging files
+_backup/
 *.backup*
 *.before-claude-fix
 round3-backups/
@@ -15,11 +14,33 @@ round3-backups/
 *.log
 
 # Python test/cache files
+__pycache__/
+*.pyc
+*.pyo
+.cache/
 .pytest_cache/
 __pycache__/
+.mypy_cache/
+.ruff_cache/
 
 # Local runtime databases
 *.db
 *.sqlite
 *.sqlite3
 .before-*
+
+# Experimental model copies
+backend/app/models/final/
+backend/app/models/v2_1/
+
+# Experimental evaluation artifacts
+datasets/v2_1/
+
+
+
+
+
+
+
+
+

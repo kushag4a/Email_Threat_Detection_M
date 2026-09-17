@@ -83,13 +83,68 @@ Risk levels:
   60-79  HIGH
   80-100 CRITICAL
 --------------------------------------------------------------------
+HARDENING (2026): deterministic evidence cannot be neutralized
+--------------------------------------------------------------------
+Per the final risk-hardening review, ML classifies email CONTENT, but
+deterministic security evidence can impose severity FLOORS or hard
+OVERRIDES when the evidence is intrinsically high-confidence. The
+scoring pipeline, in order, is:
+
+  1. Additive score from independent signals (as documented above,
+     plus the deterministic BEC section - see bec_detector.py).
+  2. Section caps (per-signal, already applied inline above).
+  3. Deterministic severity FLOORS (RISK_CONFIG["floors"]) - raise a
+     score that would otherwise land too low. Floors never lower a
+     score that is already higher on its own evidence.
+  4. Threshold mapping (score -> LOW/MEDIUM/HIGH/CRITICAL).
+  5. Hard OVERRIDES (RISK_CONFIG["overrides"]) - CRITICAL-grade
+     evidence classes ONLY. Applied last, so they can only raise the
+     outcome, never lower it, and can never be suppressed by a low/
+     benign ML score. Every override is named, documented, and
+     reported in `overrides_applied` - there is no hidden "force
+     critical" switch.
+  6. ML can contribute to the additive score but cannot reduce a
+     floor or override applied by deterministic evidence.
+
+Evidence classes (see RISK_CONFIG["overrides"]/["floors"] for the
+exact, current thresholds):
+  CRITICAL-grade (hard override): a YARA severity=high match; a
+    magic-byte-confirmed executable disguised behind a non-executable
+    filename/extension; a confirmed PhishTank URL match; an extreme,
+    multi-category BEC combination occurring together with an
+    identity/authentication mismatch.
+  HIGH-grade (floor): a YARA severity=medium match; a magic-byte-
+    confirmed executable attachment (even with no YARA match); a
+    confirmed Spamhaus DROP IP match; a serious BEC combination
+    (without an accompanying identity mismatch); a high-confidence
+    lookalike domain combined with credential/payment-intent
+    language.
+
+Deterministic BEC (business email compromise) evidence comes from
+bec_detector.py: specific, multi-word phrase PATTERNS grouped into
+named categories (payment/bank change, invoice/payment instructions,
+payroll change, gift-card requests, executive impersonation, secrecy
++urgency, wire/ACH change, supplier banking change) - never a single
+generic word. A lone category contributes only its own modest weight
+(RISK_CONFIG["weights"]["bec_category_weights"]); real severity comes
+from named combo bonuses for specific dangerous PAIRINGS
+(RISK_CONFIG["weights"]["bec_combo_bonus_weights"]), all capped
+(RISK_CONFIG["caps"]["bec_max"]).
+
+`threat_types` (Malware Attachment, Credential Phishing, Brand
+Impersonation, Malicious Redirect, BEC / Financial Fraud,
+Authentication Spoofing, Threat Intelligence Match, Suspicious
+Infrastructure) are derived ONLY from the deterministic evidence
+above - never from ML probability alone - so they are stable inputs
+for dashboard aggregation.
+--------------------------------------------------------------------
 """
 
 from __future__ import annotations
 
 import copy
 
-RISK_CONFIG_VERSION = "1.0.0"
+RISK_CONFIG_VERSION = "1.1.0"
 
 # ---------------------------------------------------------------------------
 # Single source of truth for every weight/multiplier, cap, floor, and
@@ -139,6 +194,27 @@ RISK_CONFIG: dict = {
         },
         # Attachments
         "attachment_per_flagged_file": 15,
+        # BEC (Business Email Compromise) - deterministic, combination
+        # based. Each category is a named, multi-word-phrase pattern
+        # (see bec_detector.py) - never a single generic word. A lone
+        # category contributes only its own modest weight; real
+        # severity comes from the combo bonuses below, which only
+        # fire for specific, genuinely dangerous PAIRINGS of evidence.
+        "bec_category_weights": {
+            "payment_bank_change": 12,
+            "invoice_payment_instruction": 6,
+            "payroll_change": 10,
+            "gift_card_request": 10,
+            "executive_impersonation": 10,
+            "secrecy_urgency": 8,
+            "wire_ach_change": 12,
+            "supplier_banking_change": 12,
+        },
+        "bec_combo_bonus_weights": {
+            "impersonation_plus_payment_change": 15,
+            "secrecy_urgency_plus_payment": 10,
+            "gift_card_plus_impersonation": 10,
+        },
     },
     "caps": {
         "rule_based_max": 15,
@@ -147,6 +223,7 @@ RISK_CONFIG: dict = {
         "local_heuristic_generic_max": 8,
         "local_heuristic_strong_max": 30,
         "attachment_max": 30,
+        "bec_max": 35,
     },
     "floors": {
         # A high/medium-severity YARA match is a strong enough
@@ -157,6 +234,98 @@ RISK_CONFIG: dict = {
         # its own evidence; the floor only raises a score that would
         # otherwise land below it.
         "yara_high_medium_floor": 65,
+        # High-grade: an attachment declared/named as an executable
+        # (.exe/.scr/...) whose content is CONFIRMED (by magic bytes,
+        # not by trusting the extension) to actually be an executable.
+        # This is independent of YARA - a genuine executable payload
+        # is dangerous even with no rule match.
+        "verified_executable_floor": 65,
+        # High-grade: at least one origin IP confirmed listed on the
+        # local Spamhaus DROP feed. The additive per-IP score above
+        # (capped) already contributes; this floor guarantees the
+        # message cannot land below HIGH purely because ML/body
+        # scoring was low.
+        "spamhaus_confirmed_floor": 65,
+        # High-grade: a serious, multi-category BEC combination
+        # (see RISK_CONFIG["overrides"]["extreme_bec_min_categories"]
+        # for what counts as "serious"). Without an accompanying
+        # identity/authentication mismatch this stays HIGH, not
+        # CRITICAL - see the "extreme_bec_with_identity_mismatch"
+        # override below for the CRITICAL-grade version.
+        "bec_extreme_combo_floor": 65,
+        # High-grade: a high-confidence lookalike/homoglyph domain
+        # combined with clear credential- or payment-intent language.
+        # Either signal alone is already scored on its own merits;
+        # this floor is for the specific dangerous COMBINATION.
+        "lookalike_plus_payment_intent_floor": 65,
+    },
+    # ------------------------------------------------------------------
+    # Hard overrides - CRITICAL-grade evidence classes only. Each is a
+    # named, documented condition (never a hidden "force critical"
+    # switch): when the condition is met, the final severity is set
+    # directly to `level` and the score is raised to at least `floor`
+    # so the numeric score and the displayed severity stay consistent.
+    # Overrides are applied LAST, after additive scoring, caps,
+    # floors, and threshold mapping - see calculate_risk() - and are
+    # always reported in the output under `overrides_applied`, naming
+    # exactly which evidence triggered them. ML/body-text scoring can
+    # never suppress or reverse an override.
+    # ------------------------------------------------------------------
+    "overrides": {
+        "yara_high_severity_malicious": {
+            "floor": 88,
+            "level": "CRITICAL",
+            "description": (
+                "A YARA rule match with severity=high is a genuinely "
+                "high-confidence malicious-content finding (e.g. a "
+                "PowerShell dropper, process-injection API combination, "
+                "or macro auto-exec pattern) - not merely a name/extension "
+                "heuristic. This is treated as CRITICAL-grade evidence "
+                "regardless of body text or ML score."
+            ),
+        },
+        "disguised_malicious_executable": {
+            "floor": 90,
+            "level": "CRITICAL",
+            "description": (
+                "The attachment's real content (confirmed by magic bytes) "
+                "is an executable disguised behind a non-executable "
+                "filename/extension (e.g. 'invoice.pdf.exe' or a "
+                "mismatched declared type) - a deliberate evasion pattern, "
+                "not an incidental mismatch."
+            ),
+        },
+        "confirmed_malicious_url_threat_intel": {
+            "floor": 88,
+            "level": "CRITICAL",
+            "description": (
+                "At least one URL in the message is confirmed listed on "
+                "the local PhishTank feed. A confirmed threat-intelligence "
+                "match on a URL actually present in this message is "
+                "CRITICAL-grade evidence that a benign-looking body or low "
+                "ML phishing probability must not be able to neutralize."
+            ),
+        },
+        "extreme_bec_with_identity_mismatch": {
+            "floor": 85,
+            "level": "CRITICAL",
+            "description": (
+                "A serious, multi-category BEC combination (executive "
+                "impersonation plus a payment/wire/payroll/supplier-"
+                "banking change request, optionally with secrecy+urgency) "
+                "occurring TOGETHER WITH an independent identity or "
+                "authentication mismatch (SPF/DKIM/DMARC failure, or a "
+                "Reply-To mismatch) - i.e. the impersonation claim and the "
+                "header evidence corroborate each other."
+            ),
+        },
+        # Minimum number of distinct BEC categories (see
+        # bec_detector.py) required before a combination counts as
+        # "serious" for bec_extreme_combo_floor / this override. Must
+        # include executive_impersonation and at least one
+        # payment-type category (payment_bank_change, wire_ach_change,
+        # payroll_change, supplier_banking_change, gift_card_request).
+        "extreme_bec_min_categories": 3,
     },
     "thresholds": {
         "low_max": 29,
@@ -166,6 +335,19 @@ RISK_CONFIG: dict = {
         "high_max": 79,
         "critical_min": 80,
     },
+}
+
+# Categories from bec_detector.py that represent an actual
+# payment/money-movement request (as opposed to impersonation or
+# secrecy/urgency framing alone). Used both for the "impersonation +
+# payment change" combo bonus and for the extreme-combination floor.
+_BEC_PAYMENT_TYPE_CATEGORIES = {
+    "payment_bank_change",
+    "wire_ach_change",
+    "payroll_change",
+    "supplier_banking_change",
+    "gift_card_request",
+    "invoice_payment_instruction",
 }
 
 
@@ -193,17 +375,20 @@ def calculate_risk(
     m3: dict,
     header_analysis: dict,
     attachment_analysis: dict,
+    bec_analysis: dict | None = None,
     config: dict | None = None,
 ) -> dict:
     cfg = _cfg(config)
     weights = cfg["weights"]
     caps = cfg["caps"]
     floors = cfg["floors"]
+    overrides_cfg = cfg.get("overrides", {})
     thresholds = cfg["thresholds"]
 
     score = 0.0
     reasons: list[str] = []
     contributing_modules: list[str] = []
+    threat_types: set[str] = set()
 
     # Explainable calculation breakdown - one entry per contribution
     # actually applied to the score (zero-value checks that didn't
@@ -211,6 +396,7 @@ def calculate_risk(
     calc_items: list[dict] = []
     caps_applied: list[dict] = []
     floors_applied: list[dict] = []
+    overrides_applied: list[dict] = []
 
     def _add(signal: str, input_value, multiplier, contribution: float, **extra):
         contribution = round(contribution, 4)
@@ -299,28 +485,101 @@ def calculate_risk(
             reasons.append(
                 f"Rule-based keyword scan flagged '{top_category}' language"
             )
+        # threat_types come from deterministic (keyword-pattern)
+        # evidence, never from raw ML probability - see module
+        # docstring.
+        if rule_based_threats.get("credential_theft", 0) > 0:
+            threat_types.add("Credential Phishing")
+        if rule_based_threats.get("phishing", 0) > 0:
+            threat_types.add("Credential Phishing")
+
+    # ---------------- Deterministic BEC (combination-based) ----------------
+    # See bec_detector.py: each category is a specific multi-word
+    # phrase pattern, never a single generic word, and is present or
+    # absent (no double counting within a category). Real severity
+    # comes from named combo bonuses for genuinely dangerous pairings,
+    # not from summing many weak categories.
+    bec = bec_analysis or {}
+    bec_categories: dict = bec.get("categories") or {}
+    bec_extreme_combo = False
+    if bec_categories:
+        contributing_modules.append("BEC")
+        cat_weights = weights["bec_category_weights"]
+        combo_weights = weights["bec_combo_bonus_weights"]
+        bec_cap = caps["bec_max"]
+
+        raw_bec = sum(cat_weights.get(cat, 0) for cat in bec_categories)
+        combo_hits: list[str] = []
+
+        has_impersonation = "executive_impersonation" in bec_categories
+        has_payment_type = bool(_BEC_PAYMENT_TYPE_CATEGORIES & bec_categories.keys())
+        has_secrecy_urgency = "secrecy_urgency" in bec_categories
+        has_gift_card = "gift_card_request" in bec_categories
+
+        if has_impersonation and has_payment_type:
+            raw_bec += combo_weights["impersonation_plus_payment_change"]
+            combo_hits.append("impersonation_plus_payment_change")
+        if has_secrecy_urgency and has_payment_type:
+            raw_bec += combo_weights["secrecy_urgency_plus_payment"]
+            combo_hits.append("secrecy_urgency_plus_payment")
+        if has_gift_card and has_impersonation:
+            raw_bec += combo_weights["gift_card_plus_impersonation"]
+            combo_hits.append("gift_card_plus_impersonation")
+
+        bec_contribution = min(raw_bec, bec_cap)
+        score += _add(
+            "Deterministic BEC pattern combination",
+            sorted(bec_categories),
+            "category weights + combo bonuses",
+            bec_contribution,
+            combo_bonuses_applied=combo_hits,
+        )
+        if raw_bec > bec_cap:
+            caps_applied.append({
+                "cap": "bec_max", "limit": bec_cap, "raw_value": raw_bec, "clamped_value": bec_contribution,
+            })
+        reasons.append(
+            "Deterministic BEC evidence: " + ", ".join(sorted(bec_categories))
+        )
+        threat_types.add("BEC / Financial Fraud")
+
+        extreme_min = overrides_cfg.get("extreme_bec_min_categories", 3)
+        bec_extreme_combo = (
+            len(bec_categories) >= extreme_min
+            and has_impersonation
+            and has_payment_type
+        )
 
     # ---------------- M1: auth / forensics ----------------
+    identity_or_auth_mismatch = False
     if m1:
         contributing_modules.append("M1")
         if m1.get("spf") == "fail":
             w = weights["spf_fail"]
             score += _add("SPF failed", True, w, w)
             reasons.append("SPF failed")
+            identity_or_auth_mismatch = True
+            threat_types.add("Authentication Spoofing")
         if m1.get("dkim") == "fail":
             w = weights["dkim_fail"]
             score += _add("DKIM failed", True, w, w)
             reasons.append("DKIM failed")
+            identity_or_auth_mismatch = True
+            threat_types.add("Authentication Spoofing")
         if m1.get("dmarc") == "fail":
             w = weights["dmarc_fail"]
             score += _add("DMARC failed", True, w, w)
             reasons.append("DMARC failed")
+            identity_or_auth_mismatch = True
+            threat_types.add("Authentication Spoofing")
 
     if header_analysis.get("reply_to_mismatch"):
         w = weights["reply_to_mismatch"]
         score += _add("Reply-To mismatch", True, w, w)
         reasons.append("Reply-To does not match sender")
         contributing_modules.append("M1")
+        identity_or_auth_mismatch = True
+        threat_types.add("Authentication Spoofing")
 
     if header_analysis.get("return_path_mismatch"):
         # BUG FIX (Twitch false positive / Return-Path semantics - see
@@ -358,10 +617,15 @@ def calculate_risk(
             w = weights["return_path_mismatch_weak_auth"]
             score += _add("Return-Path mismatch (auth not fully passing)", True, w, w)
             reasons.append("Return-Path does not match sender")
+            identity_or_auth_mismatch = True
+            threat_types.add("Authentication Spoofing")
         contributing_modules.append("M1")
 
     # ---------------- M3: threat intelligence ----------------
     critical_evidence = False
+    confirmed_malicious_url = False
+    spamhaus_confirmed = False
+    matched_strong_flags: list[str] = []
     if m3:
         listed_urls = [r for r in m3.get("phishtank", []) if r.get("listed")]
         listed_ips = [r for r in m3.get("spamhaus", []) if r.get("listed")]
@@ -386,6 +650,8 @@ def calculate_risk(
                 f"{len(listed_urls)} URL(s) matched the local PhishTank feed"
             )
             critical_evidence = True
+            confirmed_malicious_url = True
+            threat_types.add("Threat Intelligence Match")
 
         if listed_ips:
             contributing_modules.append("M3")
@@ -407,6 +673,9 @@ def calculate_risk(
                 f"{len(listed_ips)} IP(s) matched the local Spamhaus DROP feed"
             )
             critical_evidence = True
+            spamhaus_confirmed = True
+            threat_types.add("Threat Intelligence Match")
+            threat_types.add("Suspicious Infrastructure")
 
         local_heuristics = m3.get("local_heuristics", [])
         if local_heuristics:
@@ -422,7 +691,6 @@ def calculate_risk(
 
             residual_scores = []
             strong_flag_weights = []
-            matched_strong_flags: list[str] = []
             for item in local_heuristics:
                 item_score = float(item.get("local_score", 0) or 0)
                 flags = set(item.get("flags", []))
@@ -482,19 +750,38 @@ def calculate_risk(
                     reasons.append(
                         "URL/sender domain closely mimics a known brand (lookalike or homoglyph)"
                     )
+                    threat_types.add("Brand Impersonation")
                 if "uri_userinfo_obfuscation" in matched_strong_flags:
                     reasons.append(
                         "URL uses userinfo (@) obfuscation to hide its real destination host"
                     )
+                    threat_types.add("Malicious Redirect")
                 if "redirector_with_nested_destination" in matched_strong_flags:
                     reasons.append(
                         "URL redirects through a nested destination not shown in the visible link"
                     )
+                    threat_types.add("Malicious Redirect")
                 # These are sufficiently specific that they count as
                 # independent evidence for a CRITICAL verdict when combined
                 # with other strong signals. They do not by themselves make
                 # an email CRITICAL.
                 critical_evidence = True
+
+    # High-grade combination: a high-confidence lookalike/homoglyph
+    # domain together with clear credential- or payment-intent
+    # language (deterministic BEC evidence or the rule-based
+    # credential_theft/financial_fraud keyword categories - never ML
+    # probability alone). See RISK_CONFIG["floors"]["lookalike_plus_payment_intent_floor"].
+    lookalike_plus_payment_intent = False
+    if "brand_lookalike_domain" in matched_strong_flags:
+        has_payment_or_credential_intent = bool(
+            _BEC_PAYMENT_TYPE_CATEGORIES & bec_categories.keys()
+        ) or bool(
+            (m2.get("rule_based_threats") or {}).get("credential_theft", 0) > 0
+            or (m2.get("rule_based_threats") or {}).get("financial_fraud", 0) > 0
+        )
+        if has_payment_or_credential_intent:
+            lookalike_plus_payment_intent = True
 
     # Authentication/header failures are also independent high-confidence
     # evidence for CRITICAL. Keep the existing score weights above; this flag
@@ -511,7 +798,10 @@ def calculate_risk(
     flagged_items = [
         i for i in (attachment_analysis or {}).get("items", []) if i.get("flags")
     ]
-    yara_high_severity_hit = False
+    yara_high_severity_hit = False  # high OR medium YARA severity (existing HIGH-grade floor)
+    yara_truly_high_hit = False     # severity == "high" specifically (CRITICAL-grade override)
+    verified_executable_hit = False
+    disguised_malicious_executable_hit = False
     if flagged_items:
         per_file = weights["attachment_per_flagged_file"]
         cap = caps["attachment_max"]
@@ -528,18 +818,37 @@ def calculate_risk(
                 "cap": "attachment_max", "limit": cap, "raw_value": raw, "clamped_value": contribution,
             })
         for item in flagged_items:
+            flags = item.get("flags") or []
             reasons.append(
-                f"Attachment '{item['filename']}' flagged: {', '.join(item['flags'])}"
+                f"Attachment '{item['filename']}' flagged: {', '.join(flags)}"
             )
             yara_info = item.get("yara") or {}
             if yara_info.get("matches"):
                 severities = {m.get("severity") for m in yara_info["matches"]}
                 if "high" in severities or "medium" in severities:
                     yara_high_severity_hit = True
+                    threat_types.add("Malware Attachment")
+                if "high" in severities:
+                    yara_truly_high_hit = True
+
+            is_verified_executable = (
+                item.get("detected_category") == "executable"
+                or item.get("detected_type") in ("application/x-msdownload", "application/x-elf")
+            )
+            if is_verified_executable and "executable_or_script_extension" in flags:
+                verified_executable_hit = True
+                threat_types.add("Malware Attachment")
+            if is_verified_executable and (
+                "disguised_double_extension" in flags
+                or "extension_content_type_mismatch" in flags
+            ):
+                disguised_malicious_executable_hit = True
+                threat_types.add("Malware Attachment")
         contributing_modules.append("attachments")
 
     raw_score = score
-    score = max(0, min(round(score), 100))
+    score_before_floors = max(0, min(round(score), 100))
+    score = score_before_floors
 
     # EXPLICIT POLICY (documented, not an accident of arithmetic): a
     # high/medium-severity YARA match is a strong enough independent
@@ -548,20 +857,55 @@ def calculate_risk(
     # the unified score above is still computed normally and can end
     # up higher than the floor on its own evidence; the floor only
     # raises a score that would otherwise land below it.
-    if yara_high_severity_hit:
-        floor_value = floors["yara_high_medium_floor"]
+    def _apply_floor(name: str, condition: bool, reason: str):
+        nonlocal score
+        if not condition:
+            return
+        floor_value = floors[name]
         score_before_floor = score
         score = max(score, floor_value)
         if score != score_before_floor:
             floors_applied.append({
-                "floor": "yara_high_medium_floor",
+                "floor": name,
                 "minimum": floor_value,
                 "score_before": score_before_floor,
                 "score_after": score,
             })
-        if "YARA rule match forced a minimum HIGH risk floor" not in reasons:
-            reasons.append("YARA rule match forced a minimum HIGH risk floor, regardless of body/AI score")
+        if reason not in reasons:
+            reasons.append(reason)
 
+    # EXPLICIT POLICY (documented, not an accident of arithmetic): a
+    # high/medium-severity YARA match is a strong enough independent
+    # signal that a low body/AI score must not be able to dilute it
+    # below HIGH. This is a deliberate floor, not "YARA matched -> 100":
+    # the unified score above is still computed normally and can end
+    # up higher than the floor on its own evidence; the floor only
+    # raises a score that would otherwise land below it.
+    _apply_floor(
+        "yara_high_medium_floor", yara_high_severity_hit,
+        "YARA rule match forced a minimum HIGH risk floor, regardless of body/AI score",
+    )
+    _apply_floor(
+        "verified_executable_floor", verified_executable_hit,
+        "Attachment content confirmed (by magic bytes, not filename) to be an executable - "
+        "forced a minimum HIGH risk floor, regardless of body/AI score",
+    )
+    _apply_floor(
+        "spamhaus_confirmed_floor", spamhaus_confirmed,
+        "Origin IP confirmed on the local Spamhaus DROP feed - forced a minimum HIGH risk floor",
+    )
+    _apply_floor(
+        "bec_extreme_combo_floor", bec_extreme_combo,
+        "Serious multi-category BEC combination (impersonation + payment-type request) "
+        "forced a minimum HIGH risk floor, regardless of body/AI score",
+    )
+    _apply_floor(
+        "lookalike_plus_payment_intent_floor", lookalike_plus_payment_intent,
+        "High-confidence lookalike domain combined with credential/payment-intent language "
+        "forced a minimum HIGH risk floor",
+    )
+
+    # ---------------- Threshold mapping (score -> severity level) ----------------
     if score >= thresholds["critical_min"] and critical_evidence:
         level = "CRITICAL"
     elif score >= thresholds["high_min"]:
@@ -576,21 +920,85 @@ def calculate_risk(
             "Aggregate score reached the CRITICAL range, but no independent high-confidence evidence was present; capped at HIGH."
         )
 
+    # ------------------------------------------------------------------
+    # Hard overrides - CRITICAL-grade evidence classes ONLY (see
+    # RISK_CONFIG["overrides"]). Applied LAST, after threshold mapping,
+    # so they can only ever RAISE the outcome (to CRITICAL) and can
+    # never be suppressed by a low ML/body score - that low score is
+    # exactly the scenario these overrides exist to guard against.
+    # Every override fired is reported in `overrides_applied` with the
+    # specific evidence and the config entry that triggered it - there
+    # is no undocumented "force critical" path.
+    # ------------------------------------------------------------------
+    ml_understated = bool(m2 and m2.get("phishing_probability", 0) < 40)
+
+    def _apply_override(name: str, condition: bool, evidence: str):
+        nonlocal score, level
+        if not condition:
+            return
+        entry = overrides_cfg.get(name)
+        if not entry:
+            return
+        floor_value = entry["floor"]
+        forced_level = entry["level"]
+        score_before = score
+        score = max(score, floor_value)
+        level_before = level
+        level = forced_level
+        overrides_applied.append({
+            "override": name,
+            "evidence": evidence,
+            "forced_level": forced_level,
+            "score_before": score_before,
+            "score_after": score,
+            "level_before": level_before,
+        })
+        note = f"Hard override ({name}): {entry['description']}"
+        if ml_understated:
+            note += (
+                " Deterministic evidence controlled the final severity; the AI/ML "
+                "phishing probability for this message was low and was NOT permitted "
+                "to downgrade or neutralize this evidence."
+            )
+        reasons.append(note)
+
+    _apply_override(
+        "yara_high_severity_malicious", yara_truly_high_hit,
+        "YARA rule match with severity=high",
+    )
+    _apply_override(
+        "disguised_malicious_executable", disguised_malicious_executable_hit,
+        "Attachment content confirmed executable but disguised via filename/extension/declared type",
+    )
+    _apply_override(
+        "confirmed_malicious_url_threat_intel", confirmed_malicious_url,
+        "One or more URLs confirmed listed on the local PhishTank feed",
+    )
+    _apply_override(
+        "extreme_bec_with_identity_mismatch", bec_extreme_combo and identity_or_auth_mismatch,
+        "Serious multi-category BEC combination together with an identity/authentication mismatch",
+    )
+
+    score = max(0, min(round(score), 100))
+
     if not reasons:
         reasons.append("No significant risk indicators found")
 
     calculation = {
         "raw_score": round(raw_score, 4),
+        "score_before_floors": score_before_floors,
         "final_score": score,
         "items": calc_items,
         "caps_applied": caps_applied,
         "floors_applied": floors_applied,
+        "overrides_applied": overrides_applied,
         "thresholds": dict(thresholds),
     }
 
     return {
         "score": score,
         "level": level,
+        "threat_types": sorted(threat_types),
         "reasons": reasons,
         "contributing_modules": sorted(set(contributing_modules)),
         "calculation": calculation,

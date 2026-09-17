@@ -544,6 +544,11 @@
 
     const reasonsList = (risk.reasons || []).map((r) => `<li>${escapeHtml(r)}</li>`).join("") || "<li>No reasons recorded.</li>";
     const evidenceList = (result.evidence_sources || []).map((s) => `<li>${escapeHtml(s)}</li>`).join("") || "<li>None</li>";
+    const threatTypeChips = (result.threat_types || []).map((t) => `<span class="attachment-chip">${escapeHtml(t)}</span>`).join("") || "<span class=\"muted-note\">No specific threat types identified from deterministic evidence.</span>";
+    const overridesApplied = ((risk.calculation || {}).overrides_applied || []);
+    const overridesNote = overridesApplied.length
+      ? `<p class="muted-note"><strong>Deterministic evidence controlled the final severity:</strong> ${overridesApplied.map((o) => escapeHtml(o.evidence)).join("; ")}.</p>`
+      : "";
 
     el["detail-panel-body"].innerHTML = `
       <div class="detail-section">
@@ -559,6 +564,9 @@
       <div class="detail-section">
         <h3>Risk</h3>
         <p>${riskBadge(risk)} <strong>${risk.score ?? "\u2014"}/100</strong></p>
+        ${overridesNote}
+        <p><strong>Threat types:</strong></p>
+        <p>${threatTypeChips}</p>
         <ul class="reasons-list">${reasonsList}</ul>
       </div>
       <div class="detail-section">
