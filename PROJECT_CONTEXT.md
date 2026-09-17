@@ -6,14 +6,6 @@ Platform. One FastAPI backend + one dashboard, supporting Gmail and
 Microsoft mailboxes through a single provider-independent analysis
 pipeline.
 
-## Team roles
-- M1 - Email header / authentication forensics
-- M2 - AI / phishing / threat classification
-- M3 - Threat intelligence (local feeds + heuristics)
-- M4 - Geolocation / infrastructure intelligence
-- M5 - Backend integration / API / parser / orchestration (this codebase)
-- M6 - Frontend / dashboard
-
 ## Current architecture
 ```
 Provider (Gmail | Microsoft | .eml upload)
