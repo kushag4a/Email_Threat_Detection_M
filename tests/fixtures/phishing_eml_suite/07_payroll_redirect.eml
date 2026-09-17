@@ -1,0 +1,15 @@
+From: Payroll Department <payroll@example-company.test>
+To: employee@example-company.test
+Date: Fri, 11 Sep 2026 10:24:31 +0530
+Subject: Payroll tax form requires review
+Message-ID: <20260911102431.007@example-attacker.test>
+Reply-To: payroll-update@example-attacker.test
+MIME-Version: 1.0
+Content-Type: text/html; charset=UTF-8
+
+<html><body>
+<p>Your annual payroll tax form is ready for review.</p>
+<p><a href="https://redirect.example-attacker.test/?next=https%3A%2F%2Fforms.example-impersonator.test%2Ftax">Open tax form</a></p>
+<p>Complete the review before the stated deadline.</p>
+<p>[SYNTHETIC TEST MESSAGE]</p>
+</body></html>

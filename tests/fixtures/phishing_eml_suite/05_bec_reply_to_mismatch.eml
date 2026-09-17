@@ -1,0 +1,22 @@
+From: Procurement Director <director@example-company.test>
+To: accounts@example-company.test
+Date: Fri, 11 Sep 2026 10:16:10 +0530
+Subject: Re: Supplier bank details
+Message-ID: <20260911101610.005@mx-example-attacker.test>
+Reply-To: newbankdetails@example-attacker.test
+Return-Path: bounce@example-attacker.test
+Received: from relay01.example-attacker.test (203.0.113.77) by mx.example-company.test;
+	Fri, 11 Sep 2026 10:16:09 +0530
+Received: from unknown (198.51.100.44) by relay01.example-attacker.test;
+	Fri, 11 Sep 2026 10:16:08 +0530
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+
+Security test case: BEC / header mismatch
+
+Please update the supplier bank account details on the next payment.
+Do not use the previous account information.
+
+Send confirmation to the Reply-To address.
+
+[SYNTHETIC MESSAGE. NO REAL BANKING ACTION IS REQUESTED.]

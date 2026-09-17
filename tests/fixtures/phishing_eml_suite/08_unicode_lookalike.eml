@@ -1,0 +1,15 @@
+From: Apple Support <support@xn--appIe-9db.example-attacker.test>
+To: user@example-company.test
+Date: Fri, 11 Sep 2026 10:28:47 +0530
+Subject: Your Apple ID has been locked
+Message-ID: <20260911102847.008@example-attacker.test>
+Reply-To: support@xn--appIe-9db.example-attacker.test
+MIME-Version: 1.0
+Content-Type: text/html; charset=UTF-8
+
+<html><body>
+<p>Your account requires security verification.</p>
+<p><a href="https://xn--appIe-9db.example-attacker.test/account/verify">Verify account</a></p>
+<p>The domain is intentionally synthetic and included to test lookalike / IDN handling.</p>
+<p>[SYNTHETIC PHISHING TEST]</p>
+</body></html>

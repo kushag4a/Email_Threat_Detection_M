@@ -1,0 +1,1744 @@
+{
+  "run_metadata": {
+    "harness_version": "2.0.0",
+    "generated_at_utc": "2026-09-16T23:01:58Z",
+    "command": "python scripts/evaluate_indic_nllb.py",
+    "dataset": {
+      "path": "C:\\Users\\Kushagra Singh\\Downloads\\EmailThreatDetection-v2\\project\\datasets\\evaluation\\indic\\indic_eval.csv",
+      "sha256": "7b235cde949fee688448dbec8cdd821d9ba88492ae8b2b5068555c8fdc356b5d",
+      "rows_read": 1100,
+      "samples_evaluated": 1100,
+      "malformed_rows": 0
+    },
+    "classifier": {
+      "path": "backend/app/models/v2",
+      "entrypoint": "backend.app.services.ml_classifier.classify_email",
+      "phishing_threshold_0_100": 50.0,
+      "positive_class": "phishing (label 1)"
+    },
+    "nllb": {
+      "dry_run": false,
+      "model_name": "facebook/nllb-200-distilled-600M",
+      "model_version": "nllb-200-distilled-600M",
+      "device_mode": "auto",
+      "max_input_tokens": 512,
+      "max_output_tokens": 512,
+      "enabled": true,
+      "cache_dir": ".cache/nllb"
+    },
+    "languages": [
+      "ben_Beng",
+      "guj_Gujr",
+      "hin_Deva",
+      "kan_Knda",
+      "mal_Mlym",
+      "mar_Deva",
+      "ory_Orya",
+      "pan_Guru",
+      "tam_Taml",
+      "tel_Telu",
+      "urd_Arab"
+    ],
+    "ordering": "samples sorted by (language, id); outputs follow that order",
+    "python": "3.12.4",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "advisory": "PROTOTYPE EVALUATION ONLY. Path B applies the production V2 classifier to NLLB-translated text for offline comparison. These numbers do not affect any production risk score and, because the dataset is synthetic and template-derived, are not evidence of production accuracy.",
+    "wall_clock_seconds": 736.216
+  },
+  "dataset_issues": [],
+  "aggregate": {
+    "n_languages": 11,
+    "n_samples": 1100,
+    "n_legitimate": 605,
+    "n_phishing": 495,
+    "baseline_evaluated_n": 1100,
+    "baseline_failures": 0,
+    "path_b_evaluated_n": 1100,
+    "translation_failures": 0,
+    "translated_classifier_failures": 0,
+    "translation_success_n": 1100,
+    "translation_attempted_n": 1100,
+    "translation_success_rate": 1.0,
+    "micro_baseline": {
+      "n": 1100,
+      "tp": 438,
+      "tn": 439,
+      "fp": 166,
+      "fn": 57,
+      "n_actual_positive": 495,
+      "n_actual_negative": 605,
+      "n_predicted_positive": 604,
+      "accuracy": 0.797273,
+      "precision": 0.725166,
+      "recall": 0.884848,
+      "f1": 0.797088
+    },
+    "micro_path_b": {
+      "n": 1100,
+      "tp": 411,
+      "tn": 524,
+      "fp": 81,
+      "fn": 84,
+      "n_actual_positive": 495,
+      "n_actual_negative": 605,
+      "n_predicted_positive": 492,
+      "accuracy": 0.85,
+      "precision": 0.835366,
+      "recall": 0.830303,
+      "f1": 0.832827
+    },
+    "micro_paired_n": 1100,
+    "micro_paired_baseline": {
+      "n": 1100,
+      "tp": 438,
+      "tn": 439,
+      "fp": 166,
+      "fn": 57,
+      "n_actual_positive": 495,
+      "n_actual_negative": 605,
+      "n_predicted_positive": 604,
+      "accuracy": 0.797273,
+      "precision": 0.725166,
+      "recall": 0.884848,
+      "f1": 0.797088
+    },
+    "micro_paired_path_b": {
+      "n": 1100,
+      "tp": 411,
+      "tn": 524,
+      "fp": 81,
+      "fn": 84,
+      "n_actual_positive": 495,
+      "n_actual_negative": 605,
+      "n_predicted_positive": 492,
+      "accuracy": 0.85,
+      "precision": 0.835366,
+      "recall": 0.830303,
+      "f1": 0.832827
+    },
+    "micro_delta_accuracy": 0.052727,
+    "micro_delta_precision": 0.1102,
+    "micro_delta_recall": -0.054545,
+    "micro_delta_f1": 0.035739,
+    "macro_baseline": {
+      "languages_included": 11,
+      "accuracy": 0.797273,
+      "precision": 0.726655,
+      "recall": 0.884849,
+      "f1": 0.797141
+    },
+    "macro_path_b": {
+      "languages_included": 11,
+      "accuracy": 0.85,
+      "precision": 0.843698,
+      "recall": 0.830303,
+      "f1": 0.834716
+    },
+    "macro_delta_accuracy": 0.052727,
+    "macro_delta_precision": 0.117044,
+    "macro_delta_recall": -0.054546,
+    "macro_delta_f1": 0.037575,
+    "macro_delta_languages_included": 11,
+    "paired_counts": {
+      "n_paired": 1100,
+      "both_correct": 759,
+      "a_correct_b_wrong": 118,
+      "b_correct_a_wrong": 176,
+      "both_wrong": 47
+    },
+    "mcnemar": {
+      "valid": true,
+      "method": "chi_square_continuity_corrected",
+      "b": 118,
+      "c": 176,
+      "statistic": 11.05102,
+      "p_value": 0.000886,
+      "note": "Chi-square with continuity correction, 1 d.o.f., on 294 discordant pairs."
+    },
+    "baseline_latency": {
+      "count": 1100,
+      "mean_s": 0.002699,
+      "median_s": 0.002352,
+      "p95_s": 0.004676
+    },
+    "translation_latency": {
+      "count": 1100,
+      "mean_s": 0.663434,
+      "median_s": 0.612802,
+      "p95_s": 1.018677
+    },
+    "translated_classifier_latency": {
+      "count": 1100,
+      "mean_s": 0.003109,
+      "median_s": 0.002772,
+      "p95_s": 0.005036
+    },
+    "path_b_total_latency": {
+      "count": 1100,
+      "mean_s": 0.666543,
+      "median_s": 0.61525,
+      "p95_s": 1.021663
+    }
+  },
+  "per_language": [
+    {
+      "language": "ben_Beng",
+      "language_name": "Bengali",
+      "n": 100,
+      "n_legitimate": 55,
+      "n_phishing": 45,
+      "baseline_evaluated_n": 100,
+      "baseline_failures": 0,
+      "baseline": {
+        "n": 100,
+        "tp": 40,
+        "tn": 40,
+        "fp": 15,
+        "fn": 5,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 55,
+        "accuracy": 0.8,
+        "precision": 0.727273,
+        "recall": 0.888889,
+        "f1": 0.8
+      },
+      "path_b_evaluated_n": 100,
+      "translation_failures": 0,
+      "translated_classifier_failures": 0,
+      "translation_success_n": 100,
+      "translation_success_rate": 1.0,
+      "path_b": {
+        "n": 100,
+        "tp": 40,
+        "tn": 47,
+        "fp": 8,
+        "fn": 5,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 48,
+        "accuracy": 0.87,
+        "precision": 0.833333,
+        "recall": 0.888889,
+        "f1": 0.860215
+      },
+      "paired_n": 100,
+      "paired_baseline": {
+        "n": 100,
+        "tp": 40,
+        "tn": 40,
+        "fp": 15,
+        "fn": 5,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 55,
+        "accuracy": 0.8,
+        "precision": 0.727273,
+        "recall": 0.888889,
+        "f1": 0.8
+      },
+      "paired_path_b": {
+        "n": 100,
+        "tp": 40,
+        "tn": 47,
+        "fp": 8,
+        "fn": 5,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 48,
+        "accuracy": 0.87,
+        "precision": 0.833333,
+        "recall": 0.888889,
+        "f1": 0.860215
+      },
+      "delta_accuracy": 0.07,
+      "delta_precision": 0.10606,
+      "delta_recall": 0.0,
+      "delta_f1": 0.060215,
+      "paired_counts": {
+        "n_paired": 100,
+        "both_correct": 71,
+        "a_correct_b_wrong": 9,
+        "b_correct_a_wrong": 16,
+        "both_wrong": 4
+      },
+      "mcnemar": {
+        "valid": true,
+        "method": "chi_square_continuity_corrected",
+        "b": 9,
+        "c": 16,
+        "statistic": 1.44,
+        "p_value": 0.230139,
+        "note": "Chi-square with continuity correction, 1 d.o.f., on 25 discordant pairs."
+      },
+      "baseline_latency": {
+        "count": 100,
+        "mean_s": 0.002131,
+        "median_s": 0.001894,
+        "p95_s": 0.002286
+      },
+      "translation_latency": {
+        "count": 100,
+        "mean_s": 0.655492,
+        "median_s": 0.499468,
+        "p95_s": 0.743344
+      },
+      "translated_classifier_latency": {
+        "count": 100,
+        "mean_s": 0.002344,
+        "median_s": 0.002294,
+        "p95_s": 0.002672
+      },
+      "path_b_total_latency": {
+        "count": 100,
+        "mean_s": 0.657836,
+        "median_s": 0.501737,
+        "p95_s": 0.7456
+      }
+    },
+    {
+      "language": "guj_Gujr",
+      "language_name": "Gujarati",
+      "n": 100,
+      "n_legitimate": 55,
+      "n_phishing": 45,
+      "baseline_evaluated_n": 100,
+      "baseline_failures": 0,
+      "baseline": {
+        "n": 100,
+        "tp": 39,
+        "tn": 40,
+        "fp": 15,
+        "fn": 6,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 54,
+        "accuracy": 0.79,
+        "precision": 0.722222,
+        "recall": 0.866667,
+        "f1": 0.787879
+      },
+      "path_b_evaluated_n": 100,
+      "translation_failures": 0,
+      "translated_classifier_failures": 0,
+      "translation_success_n": 100,
+      "translation_success_rate": 1.0,
+      "path_b": {
+        "n": 100,
+        "tp": 37,
+        "tn": 45,
+        "fp": 10,
+        "fn": 8,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 47,
+        "accuracy": 0.82,
+        "precision": 0.787234,
+        "recall": 0.822222,
+        "f1": 0.804348
+      },
+      "paired_n": 100,
+      "paired_baseline": {
+        "n": 100,
+        "tp": 39,
+        "tn": 40,
+        "fp": 15,
+        "fn": 6,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 54,
+        "accuracy": 0.79,
+        "precision": 0.722222,
+        "recall": 0.866667,
+        "f1": 0.787879
+      },
+      "paired_path_b": {
+        "n": 100,
+        "tp": 37,
+        "tn": 45,
+        "fp": 10,
+        "fn": 8,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 47,
+        "accuracy": 0.82,
+        "precision": 0.787234,
+        "recall": 0.822222,
+        "f1": 0.804348
+      },
+      "delta_accuracy": 0.03,
+      "delta_precision": 0.065012,
+      "delta_recall": -0.044445,
+      "delta_f1": 0.016469,
+      "paired_counts": {
+        "n_paired": 100,
+        "both_correct": 66,
+        "a_correct_b_wrong": 13,
+        "b_correct_a_wrong": 16,
+        "both_wrong": 5
+      },
+      "mcnemar": {
+        "valid": true,
+        "method": "chi_square_continuity_corrected",
+        "b": 13,
+        "c": 16,
+        "statistic": 0.137931,
+        "p_value": 0.710347,
+        "note": "Chi-square with continuity correction, 1 d.o.f., on 29 discordant pairs."
+      },
+      "baseline_latency": {
+        "count": 100,
+        "mean_s": 0.002253,
+        "median_s": 0.002126,
+        "p95_s": 0.003112
+      },
+      "translation_latency": {
+        "count": 100,
+        "mean_s": 0.647437,
+        "median_s": 0.627245,
+        "p95_s": 0.952138
+      },
+      "translated_classifier_latency": {
+        "count": 100,
+        "mean_s": 0.002736,
+        "median_s": 0.002512,
+        "p95_s": 0.00438
+      },
+      "path_b_total_latency": {
+        "count": 100,
+        "mean_s": 0.650173,
+        "median_s": 0.629756,
+        "p95_s": 0.955015
+      }
+    },
+    {
+      "language": "hin_Deva",
+      "language_name": "Hindi",
+      "n": 100,
+      "n_legitimate": 55,
+      "n_phishing": 45,
+      "baseline_evaluated_n": 100,
+      "baseline_failures": 0,
+      "baseline": {
+        "n": 100,
+        "tp": 44,
+        "tn": 41,
+        "fp": 14,
+        "fn": 1,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 58,
+        "accuracy": 0.85,
+        "precision": 0.758621,
+        "recall": 0.977778,
+        "f1": 0.854369
+      },
+      "path_b_evaluated_n": 100,
+      "translation_failures": 0,
+      "translated_classifier_failures": 0,
+      "translation_success_n": 100,
+      "translation_success_rate": 1.0,
+      "path_b": {
+        "n": 100,
+        "tp": 37,
+        "tn": 52,
+        "fp": 3,
+        "fn": 8,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 40,
+        "accuracy": 0.89,
+        "precision": 0.925,
+        "recall": 0.822222,
+        "f1": 0.870588
+      },
+      "paired_n": 100,
+      "paired_baseline": {
+        "n": 100,
+        "tp": 44,
+        "tn": 41,
+        "fp": 14,
+        "fn": 1,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 58,
+        "accuracy": 0.85,
+        "precision": 0.758621,
+        "recall": 0.977778,
+        "f1": 0.854369
+      },
+      "paired_path_b": {
+        "n": 100,
+        "tp": 37,
+        "tn": 52,
+        "fp": 3,
+        "fn": 8,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 40,
+        "accuracy": 0.89,
+        "precision": 0.925,
+        "recall": 0.822222,
+        "f1": 0.870588
+      },
+      "delta_accuracy": 0.04,
+      "delta_precision": 0.166379,
+      "delta_recall": -0.155556,
+      "delta_f1": 0.016219,
+      "paired_counts": {
+        "n_paired": 100,
+        "both_correct": 75,
+        "a_correct_b_wrong": 10,
+        "b_correct_a_wrong": 14,
+        "both_wrong": 1
+      },
+      "mcnemar": {
+        "valid": true,
+        "method": "exact_binomial",
+        "b": 10,
+        "c": 14,
+        "statistic": 10.0,
+        "p_value": 0.541256,
+        "note": "Exact two-sided binomial on 24 discordant pairs (< 25, chi-square approximation not used)."
+      },
+      "baseline_latency": {
+        "count": 100,
+        "mean_s": 0.002231,
+        "median_s": 0.001988,
+        "p95_s": 0.003625
+      },
+      "translation_latency": {
+        "count": 100,
+        "mean_s": 0.595778,
+        "median_s": 0.567144,
+        "p95_s": 0.932363
+      },
+      "translated_classifier_latency": {
+        "count": 100,
+        "mean_s": 0.002642,
+        "median_s": 0.00242,
+        "p95_s": 0.003971
+      },
+      "path_b_total_latency": {
+        "count": 100,
+        "mean_s": 0.59842,
+        "median_s": 0.569349,
+        "p95_s": 0.93517
+      }
+    },
+    {
+      "language": "kan_Knda",
+      "language_name": "Kannada",
+      "n": 100,
+      "n_legitimate": 55,
+      "n_phishing": 45,
+      "baseline_evaluated_n": 100,
+      "baseline_failures": 0,
+      "baseline": {
+        "n": 100,
+        "tp": 40,
+        "tn": 33,
+        "fp": 22,
+        "fn": 5,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 62,
+        "accuracy": 0.73,
+        "precision": 0.645161,
+        "recall": 0.888889,
+        "f1": 0.747664
+      },
+      "path_b_evaluated_n": 100,
+      "translation_failures": 0,
+      "translated_classifier_failures": 0,
+      "translation_success_n": 100,
+      "translation_success_rate": 1.0,
+      "path_b": {
+        "n": 100,
+        "tp": 37,
+        "tn": 42,
+        "fp": 13,
+        "fn": 8,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 50,
+        "accuracy": 0.79,
+        "precision": 0.74,
+        "recall": 0.822222,
+        "f1": 0.778947
+      },
+      "paired_n": 100,
+      "paired_baseline": {
+        "n": 100,
+        "tp": 40,
+        "tn": 33,
+        "fp": 22,
+        "fn": 5,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 62,
+        "accuracy": 0.73,
+        "precision": 0.645161,
+        "recall": 0.888889,
+        "f1": 0.747664
+      },
+      "paired_path_b": {
+        "n": 100,
+        "tp": 37,
+        "tn": 42,
+        "fp": 13,
+        "fn": 8,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 50,
+        "accuracy": 0.79,
+        "precision": 0.74,
+        "recall": 0.822222,
+        "f1": 0.778947
+      },
+      "delta_accuracy": 0.06,
+      "delta_precision": 0.094839,
+      "delta_recall": -0.066667,
+      "delta_f1": 0.031283,
+      "paired_counts": {
+        "n_paired": 100,
+        "both_correct": 59,
+        "a_correct_b_wrong": 14,
+        "b_correct_a_wrong": 20,
+        "both_wrong": 7
+      },
+      "mcnemar": {
+        "valid": true,
+        "method": "chi_square_continuity_corrected",
+        "b": 14,
+        "c": 20,
+        "statistic": 0.735294,
+        "p_value": 0.391173,
+        "note": "Chi-square with continuity correction, 1 d.o.f., on 34 discordant pairs."
+      },
+      "baseline_latency": {
+        "count": 100,
+        "mean_s": 0.002704,
+        "median_s": 0.002366,
+        "p95_s": 0.004346
+      },
+      "translation_latency": {
+        "count": 100,
+        "mean_s": 0.581748,
+        "median_s": 0.530079,
+        "p95_s": 0.86969
+      },
+      "translated_classifier_latency": {
+        "count": 100,
+        "mean_s": 0.003168,
+        "median_s": 0.002718,
+        "p95_s": 0.005222
+      },
+      "path_b_total_latency": {
+        "count": 100,
+        "mean_s": 0.584916,
+        "median_s": 0.532725,
+        "p95_s": 0.874741
+      }
+    },
+    {
+      "language": "mal_Mlym",
+      "language_name": "Malayalam",
+      "n": 100,
+      "n_legitimate": 55,
+      "n_phishing": 45,
+      "baseline_evaluated_n": 100,
+      "baseline_failures": 0,
+      "baseline": {
+        "n": 100,
+        "tp": 39,
+        "tn": 42,
+        "fp": 13,
+        "fn": 6,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 52,
+        "accuracy": 0.81,
+        "precision": 0.75,
+        "recall": 0.866667,
+        "f1": 0.804124
+      },
+      "path_b_evaluated_n": 100,
+      "translation_failures": 0,
+      "translated_classifier_failures": 0,
+      "translation_success_n": 100,
+      "translation_success_rate": 1.0,
+      "path_b": {
+        "n": 100,
+        "tp": 37,
+        "tn": 55,
+        "fp": 0,
+        "fn": 8,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 37,
+        "accuracy": 0.92,
+        "precision": 1.0,
+        "recall": 0.822222,
+        "f1": 0.902439
+      },
+      "paired_n": 100,
+      "paired_baseline": {
+        "n": 100,
+        "tp": 39,
+        "tn": 42,
+        "fp": 13,
+        "fn": 6,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 52,
+        "accuracy": 0.81,
+        "precision": 0.75,
+        "recall": 0.866667,
+        "f1": 0.804124
+      },
+      "paired_path_b": {
+        "n": 100,
+        "tp": 37,
+        "tn": 55,
+        "fp": 0,
+        "fn": 8,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 37,
+        "accuracy": 0.92,
+        "precision": 1.0,
+        "recall": 0.822222,
+        "f1": 0.902439
+      },
+      "delta_accuracy": 0.11,
+      "delta_precision": 0.25,
+      "delta_recall": -0.044445,
+      "delta_f1": 0.098315,
+      "paired_counts": {
+        "n_paired": 100,
+        "both_correct": 75,
+        "a_correct_b_wrong": 6,
+        "b_correct_a_wrong": 17,
+        "both_wrong": 2
+      },
+      "mcnemar": {
+        "valid": true,
+        "method": "exact_binomial",
+        "b": 6,
+        "c": 17,
+        "statistic": 6.0,
+        "p_value": 0.03469,
+        "note": "Exact two-sided binomial on 23 discordant pairs (< 25, chi-square approximation not used)."
+      },
+      "baseline_latency": {
+        "count": 100,
+        "mean_s": 0.002757,
+        "median_s": 0.00241,
+        "p95_s": 0.004538
+      },
+      "translation_latency": {
+        "count": 100,
+        "mean_s": 0.641006,
+        "median_s": 0.618858,
+        "p95_s": 0.985698
+      },
+      "translated_classifier_latency": {
+        "count": 100,
+        "mean_s": 0.003227,
+        "median_s": 0.002906,
+        "p95_s": 0.004671
+      },
+      "path_b_total_latency": {
+        "count": 100,
+        "mean_s": 0.644233,
+        "median_s": 0.622841,
+        "p95_s": 0.988461
+      }
+    },
+    {
+      "language": "mar_Deva",
+      "language_name": "Marathi",
+      "n": 100,
+      "n_legitimate": 55,
+      "n_phishing": 45,
+      "baseline_evaluated_n": 100,
+      "baseline_failures": 0,
+      "baseline": {
+        "n": 100,
+        "tp": 43,
+        "tn": 41,
+        "fp": 14,
+        "fn": 2,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 57,
+        "accuracy": 0.84,
+        "precision": 0.754386,
+        "recall": 0.955556,
+        "f1": 0.843137
+      },
+      "path_b_evaluated_n": 100,
+      "translation_failures": 0,
+      "translated_classifier_failures": 0,
+      "translation_success_n": 100,
+      "translation_success_rate": 1.0,
+      "path_b": {
+        "n": 100,
+        "tp": 38,
+        "tn": 48,
+        "fp": 7,
+        "fn": 7,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 45,
+        "accuracy": 0.86,
+        "precision": 0.844444,
+        "recall": 0.844444,
+        "f1": 0.844444
+      },
+      "paired_n": 100,
+      "paired_baseline": {
+        "n": 100,
+        "tp": 43,
+        "tn": 41,
+        "fp": 14,
+        "fn": 2,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 57,
+        "accuracy": 0.84,
+        "precision": 0.754386,
+        "recall": 0.955556,
+        "f1": 0.843137
+      },
+      "paired_path_b": {
+        "n": 100,
+        "tp": 38,
+        "tn": 48,
+        "fp": 7,
+        "fn": 7,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 45,
+        "accuracy": 0.86,
+        "precision": 0.844444,
+        "recall": 0.844444,
+        "f1": 0.844444
+      },
+      "delta_accuracy": 0.02,
+      "delta_precision": 0.090058,
+      "delta_recall": -0.111112,
+      "delta_f1": 0.001307,
+      "paired_counts": {
+        "n_paired": 100,
+        "both_correct": 74,
+        "a_correct_b_wrong": 10,
+        "b_correct_a_wrong": 12,
+        "both_wrong": 4
+      },
+      "mcnemar": {
+        "valid": true,
+        "method": "exact_binomial",
+        "b": 10,
+        "c": 12,
+        "statistic": 10.0,
+        "p_value": 0.831812,
+        "note": "Exact two-sided binomial on 22 discordant pairs (< 25, chi-square approximation not used)."
+      },
+      "baseline_latency": {
+        "count": 100,
+        "mean_s": 0.00276,
+        "median_s": 0.00241,
+        "p95_s": 0.00438
+      },
+      "translation_latency": {
+        "count": 100,
+        "mean_s": 0.792652,
+        "median_s": 0.650281,
+        "p95_s": 0.997959
+      },
+      "translated_classifier_latency": {
+        "count": 100,
+        "mean_s": 0.003048,
+        "median_s": 0.002762,
+        "p95_s": 0.00522
+      },
+      "path_b_total_latency": {
+        "count": 100,
+        "mean_s": 0.795699,
+        "median_s": 0.65308,
+        "p95_s": 1.001896
+      }
+    },
+    {
+      "language": "ory_Orya",
+      "language_name": "Odia",
+      "n": 100,
+      "n_legitimate": 55,
+      "n_phishing": 45,
+      "baseline_evaluated_n": 100,
+      "baseline_failures": 0,
+      "baseline": {
+        "n": 100,
+        "tp": 35,
+        "tn": 36,
+        "fp": 19,
+        "fn": 10,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 54,
+        "accuracy": 0.71,
+        "precision": 0.648148,
+        "recall": 0.777778,
+        "f1": 0.707071
+      },
+      "path_b_evaluated_n": 100,
+      "translation_failures": 0,
+      "translated_classifier_failures": 0,
+      "translation_success_n": 100,
+      "translation_success_rate": 1.0,
+      "path_b": {
+        "n": 100,
+        "tp": 37,
+        "tn": 41,
+        "fp": 14,
+        "fn": 8,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 51,
+        "accuracy": 0.78,
+        "precision": 0.72549,
+        "recall": 0.822222,
+        "f1": 0.770833
+      },
+      "paired_n": 100,
+      "paired_baseline": {
+        "n": 100,
+        "tp": 35,
+        "tn": 36,
+        "fp": 19,
+        "fn": 10,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 54,
+        "accuracy": 0.71,
+        "precision": 0.648148,
+        "recall": 0.777778,
+        "f1": 0.707071
+      },
+      "paired_path_b": {
+        "n": 100,
+        "tp": 37,
+        "tn": 41,
+        "fp": 14,
+        "fn": 8,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 51,
+        "accuracy": 0.78,
+        "precision": 0.72549,
+        "recall": 0.822222,
+        "f1": 0.770833
+      },
+      "delta_accuracy": 0.07,
+      "delta_precision": 0.077342,
+      "delta_recall": 0.044444,
+      "delta_f1": 0.063762,
+      "paired_counts": {
+        "n_paired": 100,
+        "both_correct": 57,
+        "a_correct_b_wrong": 14,
+        "b_correct_a_wrong": 21,
+        "both_wrong": 8
+      },
+      "mcnemar": {
+        "valid": true,
+        "method": "chi_square_continuity_corrected",
+        "b": 14,
+        "c": 21,
+        "statistic": 1.028571,
+        "p_value": 0.310494,
+        "note": "Chi-square with continuity correction, 1 d.o.f., on 35 discordant pairs."
+      },
+      "baseline_latency": {
+        "count": 100,
+        "mean_s": 0.003004,
+        "median_s": 0.002548,
+        "p95_s": 0.005567
+      },
+      "translation_latency": {
+        "count": 100,
+        "mean_s": 0.666058,
+        "median_s": 0.638697,
+        "p95_s": 0.985195
+      },
+      "translated_classifier_latency": {
+        "count": 100,
+        "mean_s": 0.003465,
+        "median_s": 0.003065,
+        "p95_s": 0.005682
+      },
+      "path_b_total_latency": {
+        "count": 100,
+        "mean_s": 0.669523,
+        "median_s": 0.641984,
+        "p95_s": 0.98986
+      }
+    },
+    {
+      "language": "pan_Guru",
+      "language_name": "Punjabi",
+      "n": 100,
+      "n_legitimate": 55,
+      "n_phishing": 45,
+      "baseline_evaluated_n": 100,
+      "baseline_failures": 0,
+      "baseline": {
+        "n": 100,
+        "tp": 37,
+        "tn": 45,
+        "fp": 10,
+        "fn": 8,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 47,
+        "accuracy": 0.82,
+        "precision": 0.787234,
+        "recall": 0.822222,
+        "f1": 0.804348
+      },
+      "path_b_evaluated_n": 100,
+      "translation_failures": 0,
+      "translated_classifier_failures": 0,
+      "translation_success_n": 100,
+      "translation_success_rate": 1.0,
+      "path_b": {
+        "n": 100,
+        "tp": 37,
+        "tn": 52,
+        "fp": 3,
+        "fn": 8,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 40,
+        "accuracy": 0.89,
+        "precision": 0.925,
+        "recall": 0.822222,
+        "f1": 0.870588
+      },
+      "paired_n": 100,
+      "paired_baseline": {
+        "n": 100,
+        "tp": 37,
+        "tn": 45,
+        "fp": 10,
+        "fn": 8,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 47,
+        "accuracy": 0.82,
+        "precision": 0.787234,
+        "recall": 0.822222,
+        "f1": 0.804348
+      },
+      "paired_path_b": {
+        "n": 100,
+        "tp": 37,
+        "tn": 52,
+        "fp": 3,
+        "fn": 8,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 40,
+        "accuracy": 0.89,
+        "precision": 0.925,
+        "recall": 0.822222,
+        "f1": 0.870588
+      },
+      "delta_accuracy": 0.07,
+      "delta_precision": 0.137766,
+      "delta_recall": 0.0,
+      "delta_f1": 0.06624,
+      "paired_counts": {
+        "n_paired": 100,
+        "both_correct": 72,
+        "a_correct_b_wrong": 10,
+        "b_correct_a_wrong": 17,
+        "both_wrong": 1
+      },
+      "mcnemar": {
+        "valid": true,
+        "method": "chi_square_continuity_corrected",
+        "b": 10,
+        "c": 17,
+        "statistic": 1.333333,
+        "p_value": 0.248213,
+        "note": "Chi-square with continuity correction, 1 d.o.f., on 27 discordant pairs."
+      },
+      "baseline_latency": {
+        "count": 100,
+        "mean_s": 0.003231,
+        "median_s": 0.002899,
+        "p95_s": 0.005315
+      },
+      "translation_latency": {
+        "count": 100,
+        "mean_s": 0.753737,
+        "median_s": 0.732736,
+        "p95_s": 1.210222
+      },
+      "translated_classifier_latency": {
+        "count": 100,
+        "mean_s": 0.003537,
+        "median_s": 0.003198,
+        "p95_s": 0.005415
+      },
+      "path_b_total_latency": {
+        "count": 100,
+        "mean_s": 0.757274,
+        "median_s": 0.735527,
+        "p95_s": 1.213323
+      }
+    },
+    {
+      "language": "tam_Taml",
+      "language_name": "Tamil",
+      "n": 100,
+      "n_legitimate": 55,
+      "n_phishing": 45,
+      "baseline_evaluated_n": 100,
+      "baseline_failures": 0,
+      "baseline": {
+        "n": 100,
+        "tp": 40,
+        "tn": 41,
+        "fp": 14,
+        "fn": 5,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 54,
+        "accuracy": 0.81,
+        "precision": 0.740741,
+        "recall": 0.888889,
+        "f1": 0.808081
+      },
+      "path_b_evaluated_n": 100,
+      "translation_failures": 0,
+      "translated_classifier_failures": 0,
+      "translation_success_n": 100,
+      "translation_success_rate": 1.0,
+      "path_b": {
+        "n": 100,
+        "tp": 37,
+        "tn": 46,
+        "fp": 9,
+        "fn": 8,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 46,
+        "accuracy": 0.83,
+        "precision": 0.804348,
+        "recall": 0.822222,
+        "f1": 0.813187
+      },
+      "paired_n": 100,
+      "paired_baseline": {
+        "n": 100,
+        "tp": 40,
+        "tn": 41,
+        "fp": 14,
+        "fn": 5,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 54,
+        "accuracy": 0.81,
+        "precision": 0.740741,
+        "recall": 0.888889,
+        "f1": 0.808081
+      },
+      "paired_path_b": {
+        "n": 100,
+        "tp": 37,
+        "tn": 46,
+        "fp": 9,
+        "fn": 8,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 46,
+        "accuracy": 0.83,
+        "precision": 0.804348,
+        "recall": 0.822222,
+        "f1": 0.813187
+      },
+      "delta_accuracy": 0.02,
+      "delta_precision": 0.063607,
+      "delta_recall": -0.066667,
+      "delta_f1": 0.005106,
+      "paired_counts": {
+        "n_paired": 100,
+        "both_correct": 72,
+        "a_correct_b_wrong": 9,
+        "b_correct_a_wrong": 11,
+        "both_wrong": 8
+      },
+      "mcnemar": {
+        "valid": true,
+        "method": "exact_binomial",
+        "b": 9,
+        "c": 11,
+        "statistic": 9.0,
+        "p_value": 0.823803,
+        "note": "Exact two-sided binomial on 20 discordant pairs (< 25, chi-square approximation not used)."
+      },
+      "baseline_latency": {
+        "count": 100,
+        "mean_s": 0.002794,
+        "median_s": 0.002523,
+        "p95_s": 0.004383
+      },
+      "translation_latency": {
+        "count": 100,
+        "mean_s": 0.626783,
+        "median_s": 0.614702,
+        "p95_s": 0.997798
+      },
+      "translated_classifier_latency": {
+        "count": 100,
+        "mean_s": 0.003266,
+        "median_s": 0.002926,
+        "p95_s": 0.005087
+      },
+      "path_b_total_latency": {
+        "count": 100,
+        "mean_s": 0.630049,
+        "median_s": 0.618158,
+        "p95_s": 1.001049
+      }
+    },
+    {
+      "language": "tel_Telu",
+      "language_name": "Telugu",
+      "n": 100,
+      "n_legitimate": 55,
+      "n_phishing": 45,
+      "baseline_evaluated_n": 100,
+      "baseline_failures": 0,
+      "baseline": {
+        "n": 100,
+        "tp": 40,
+        "tn": 40,
+        "fp": 15,
+        "fn": 5,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 55,
+        "accuracy": 0.8,
+        "precision": 0.727273,
+        "recall": 0.888889,
+        "f1": 0.8
+      },
+      "path_b_evaluated_n": 100,
+      "translation_failures": 0,
+      "translated_classifier_failures": 0,
+      "translation_success_n": 100,
+      "translation_success_rate": 1.0,
+      "path_b": {
+        "n": 100,
+        "tp": 37,
+        "tn": 44,
+        "fp": 11,
+        "fn": 8,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 48,
+        "accuracy": 0.81,
+        "precision": 0.770833,
+        "recall": 0.822222,
+        "f1": 0.795699
+      },
+      "paired_n": 100,
+      "paired_baseline": {
+        "n": 100,
+        "tp": 40,
+        "tn": 40,
+        "fp": 15,
+        "fn": 5,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 55,
+        "accuracy": 0.8,
+        "precision": 0.727273,
+        "recall": 0.888889,
+        "f1": 0.8
+      },
+      "paired_path_b": {
+        "n": 100,
+        "tp": 37,
+        "tn": 44,
+        "fp": 11,
+        "fn": 8,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 48,
+        "accuracy": 0.81,
+        "precision": 0.770833,
+        "recall": 0.822222,
+        "f1": 0.795699
+      },
+      "delta_accuracy": 0.01,
+      "delta_precision": 0.04356,
+      "delta_recall": -0.066667,
+      "delta_f1": -0.004301,
+      "paired_counts": {
+        "n_paired": 100,
+        "both_correct": 65,
+        "a_correct_b_wrong": 15,
+        "b_correct_a_wrong": 16,
+        "both_wrong": 4
+      },
+      "mcnemar": {
+        "valid": true,
+        "method": "chi_square_continuity_corrected",
+        "b": 15,
+        "c": 16,
+        "statistic": 0.0,
+        "p_value": 1.0,
+        "note": "Chi-square with continuity correction, 1 d.o.f., on 31 discordant pairs."
+      },
+      "baseline_latency": {
+        "count": 100,
+        "mean_s": 0.002822,
+        "median_s": 0.002517,
+        "p95_s": 0.004546
+      },
+      "translation_latency": {
+        "count": 100,
+        "mean_s": 0.642344,
+        "median_s": 0.580132,
+        "p95_s": 1.047984
+      },
+      "translated_classifier_latency": {
+        "count": 100,
+        "mean_s": 0.003369,
+        "median_s": 0.0029,
+        "p95_s": 0.0052
+      },
+      "path_b_total_latency": {
+        "count": 100,
+        "mean_s": 0.645714,
+        "median_s": 0.583576,
+        "p95_s": 1.050883
+      }
+    },
+    {
+      "language": "urd_Arab",
+      "language_name": "Urdu",
+      "n": 100,
+      "n_legitimate": 55,
+      "n_phishing": 45,
+      "baseline_evaluated_n": 100,
+      "baseline_failures": 0,
+      "baseline": {
+        "n": 100,
+        "tp": 41,
+        "tn": 40,
+        "fp": 15,
+        "fn": 4,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 56,
+        "accuracy": 0.81,
+        "precision": 0.732143,
+        "recall": 0.911111,
+        "f1": 0.811881
+      },
+      "path_b_evaluated_n": 100,
+      "translation_failures": 0,
+      "translated_classifier_failures": 0,
+      "translation_success_n": 100,
+      "translation_success_rate": 1.0,
+      "path_b": {
+        "n": 100,
+        "tp": 37,
+        "tn": 52,
+        "fp": 3,
+        "fn": 8,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 40,
+        "accuracy": 0.89,
+        "precision": 0.925,
+        "recall": 0.822222,
+        "f1": 0.870588
+      },
+      "paired_n": 100,
+      "paired_baseline": {
+        "n": 100,
+        "tp": 41,
+        "tn": 40,
+        "fp": 15,
+        "fn": 4,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 56,
+        "accuracy": 0.81,
+        "precision": 0.732143,
+        "recall": 0.911111,
+        "f1": 0.811881
+      },
+      "paired_path_b": {
+        "n": 100,
+        "tp": 37,
+        "tn": 52,
+        "fp": 3,
+        "fn": 8,
+        "n_actual_positive": 45,
+        "n_actual_negative": 55,
+        "n_predicted_positive": 40,
+        "accuracy": 0.89,
+        "precision": 0.925,
+        "recall": 0.822222,
+        "f1": 0.870588
+      },
+      "delta_accuracy": 0.08,
+      "delta_precision": 0.192857,
+      "delta_recall": -0.088889,
+      "delta_f1": 0.058707,
+      "paired_counts": {
+        "n_paired": 100,
+        "both_correct": 73,
+        "a_correct_b_wrong": 8,
+        "b_correct_a_wrong": 16,
+        "both_wrong": 3
+      },
+      "mcnemar": {
+        "valid": true,
+        "method": "exact_binomial",
+        "b": 8,
+        "c": 16,
+        "statistic": 8.0,
+        "p_value": 0.15159,
+        "note": "Exact two-sided binomial on 24 discordant pairs (< 25, chi-square approximation not used)."
+      },
+      "baseline_latency": {
+        "count": 100,
+        "mean_s": 0.002999,
+        "median_s": 0.002652,
+        "p95_s": 0.004598
+      },
+      "translation_latency": {
+        "count": 100,
+        "mean_s": 0.694743,
+        "median_s": 0.648605,
+        "p95_s": 1.10573
+      },
+      "translated_classifier_latency": {
+        "count": 100,
+        "mean_s": 0.003397,
+        "median_s": 0.002998,
+        "p95_s": 0.004877
+      },
+      "path_b_total_latency": {
+        "count": 100,
+        "mean_s": 0.69814,
+        "median_s": 0.651195,
+        "p95_s": 1.108432
+      }
+    }
+  ],
+  "disagreements": {
+    "n_a_correct_b_wrong": 118,
+    "n_b_correct_a_wrong": 176,
+    "per_language": {
+      "ben_Beng": {
+        "a_correct_b_wrong": 9,
+        "b_correct_a_wrong": 16
+      },
+      "guj_Gujr": {
+        "a_correct_b_wrong": 13,
+        "b_correct_a_wrong": 16
+      },
+      "hin_Deva": {
+        "a_correct_b_wrong": 10,
+        "b_correct_a_wrong": 14
+      },
+      "kan_Knda": {
+        "a_correct_b_wrong": 14,
+        "b_correct_a_wrong": 20
+      },
+      "mal_Mlym": {
+        "a_correct_b_wrong": 6,
+        "b_correct_a_wrong": 17
+      },
+      "mar_Deva": {
+        "a_correct_b_wrong": 10,
+        "b_correct_a_wrong": 12
+      },
+      "ory_Orya": {
+        "a_correct_b_wrong": 14,
+        "b_correct_a_wrong": 21
+      },
+      "pan_Guru": {
+        "a_correct_b_wrong": 10,
+        "b_correct_a_wrong": 17
+      },
+      "tam_Taml": {
+        "a_correct_b_wrong": 9,
+        "b_correct_a_wrong": 11
+      },
+      "tel_Telu": {
+        "a_correct_b_wrong": 15,
+        "b_correct_a_wrong": 16
+      },
+      "urd_Arab": {
+        "a_correct_b_wrong": 8,
+        "b_correct_a_wrong": 16
+      }
+    },
+    "examples_a_correct_b_wrong": [
+      {
+        "id": 214,
+        "language": "ben_Beng",
+        "language_name": "Bengali",
+        "label": 1,
+        "baseline_pred": 1,
+        "path_b_pred": 0,
+        "baseline_phishing_prob": 63.71,
+        "translated_phishing_prob": 41.11,
+        "source_text_excerpt": "অবিলম্বে পেমেন্ট প্রয়োজন / নমস্কার প্রিয়া, আমি এখন একটি মিটিংয়ে আছি এবং অবিলম্বে ₹15000 সংযুক্ত অ্যাকাউন্টে পাঠাতে হবে। অনুগ্রহ করে দ্রুত নিশ্চিত করুন। ধন্যবাদ, ম্যানেজমেন্ট",
+        "translated_text_excerpt": "I am in a meeting and will send ₹15000 to the linked account immediately. Please confirm quickly."
+      },
+      {
+        "id": 240,
+        "language": "ben_Beng",
+        "language_name": "Bengali",
+        "label": 0,
+        "baseline_pred": 0,
+        "path_b_pred": 1,
+        "baseline_phishing_prob": 42.94,
+        "translated_phishing_prob": 90.25,
+        "source_text_excerpt": "SwiftCourier মাসিক নিউজলেটার - 27/12/2026 / প্রিয় গ্রাহক, এই মাসে SwiftCourier তে যুক্ত হওয়া নতুন সুবিধা ও অফার সম্পর্কে জানতে এই নিউজলেটারটি পড়ুন। SwiftCourier টিম",
+        "translated_text_excerpt": "SwiftCourier Monthly Newsletter - 27/12/2026 Dear subscribers, read this newsletter to learn about the new benefits and offers of joining SwiftCourier this month."
+      },
+      {
+        "id": 261,
+        "language": "ben_Beng",
+        "language_name": "Bengali",
+        "label": 0,
+        "baseline_pred": 0,
+        "path_b_pred": 1,
+        "baseline_phishing_prob": 45.69,
+        "translated_phishing_prob": 62.34,
+        "source_text_excerpt": "CloudMail মাসিক নিউজলেটার - 22/03/2026 / প্রিয় গ্রাহক, এই মাসে CloudMail তে যুক্ত হওয়া নতুন সুবিধা ও অফার সম্পর্কে জানতে এই নিউজলেটারটি পড়ুন। CloudMail টিম",
+        "translated_text_excerpt": "CloudMail Monthly Newsletter - 22/03/2026 Dear customers, read this newsletter to learn about the new benefits and offers that will be added to CloudMail this month."
+      },
+      {
+        "id": 262,
+        "language": "ben_Beng",
+        "language_name": "Bengali",
+        "label": 1,
+        "baseline_pred": 1,
+        "path_b_pred": 0,
+        "baseline_phishing_prob": 63.71,
+        "translated_phishing_prob": 41.11,
+        "source_text_excerpt": "অবিলম্বে পেমেন্ট প্রয়োজন / নমস্কার সঞ্জয়, আমি এখন একটি মিটিংয়ে আছি এবং অবিলম্বে ₹15000 সংযুক্ত অ্যাকাউন্টে পাঠাতে হবে। অনুগ্রহ করে দ্রুত নিশ্চিত করুন। ধন্যবাদ, ম্যানেজমেন্ট",
+        "translated_text_excerpt": "I am in a meeting and will have to send ₹15000 to the linked account immediately. Please confirm quickly."
+      },
+      {
+        "id": 277,
+        "language": "ben_Beng",
+        "language_name": "Bengali",
+        "label": 1,
+        "baseline_pred": 1,
+        "path_b_pred": 0,
+        "baseline_phishing_prob": 75.59,
+        "translated_phishing_prob": 49.0,
+        "source_text_excerpt": "অবিলম্বে পেমেন্ট প্রয়োজন / নমস্কার কবিতা, আমি এখন একটি মিটিংয়ে আছি এবং অবিলম্বে ₹4500 সংযুক্ত অ্যাকাউন্টে পাঠাতে হবে। অনুগ্রহ করে দ্রুত নিশ্চিত করুন। ধন্যবাদ, ম্যানেজমেন্ট",
+        "translated_text_excerpt": "I am in a meeting and will send ₹4500 to the linked account immediately. Please confirm quickly."
+      },
+      {
+        "id": 284,
+        "language": "ben_Beng",
+        "language_name": "Bengali",
+        "label": 0,
+        "baseline_pred": 0,
+        "path_b_pred": 1,
+        "baseline_phishing_prob": 42.94,
+        "translated_phishing_prob": 64.8,
+        "source_text_excerpt": "QuickShop মাসিক নিউজলেটার - 27/12/2026 / প্রিয় গ্রাহক, এই মাসে QuickShop তে যুক্ত হওয়া নতুন সুবিধা ও অফার সম্পর্কে জানতে এই নিউজলেটারটি পড়ুন। QuickShop টিম",
+        "translated_text_excerpt": "QuickShop Monthly Newsletter - 27/12/2026 Dear customers, read this newsletter to learn about the new benefits and offers to be added to QuickShop this month."
+      },
+      {
+        "id": 294,
+        "language": "ben_Beng",
+        "language_name": "Bengali",
+        "label": 1,
+        "baseline_pred": 1,
+        "path_b_pred": 0,
+        "baseline_phishing_prob": 64.82,
+        "translated_phishing_prob": 36.66,
+        "source_text_excerpt": "অবিলম্বে পেমেন্ট প্রয়োজন / নমস্কার স্বাতী, আমি এখন একটি মিটিংয়ে আছি এবং অবিলম্বে ₹25000 সংযুক্ত অ্যাকাউন্টে পাঠাতে হবে। অনুগ্রহ করে দ্রুত নিশ্চিত করুন। ধন্যবাদ, ম্যানেজমেন্ট",
+        "translated_text_excerpt": "I am in a meeting and will send ₹25000 to the linked account immediately. Please confirm quickly."
+      },
+      {
+        "id": 296,
+        "language": "ben_Beng",
+        "language_name": "Bengali",
+        "label": 0,
+        "baseline_pred": 0,
+        "path_b_pred": 1,
+        "baseline_phishing_prob": 14.17,
+        "translated_phishing_prob": 54.15,
+        "source_text_excerpt": "SafePay মাসিক নিউজলেটার - 03/01/2026 / প্রিয় গ্রাহক, এই মাসে SafePay তে যুক্ত হওয়া নতুন সুবিধা ও অফার সম্পর্কে জানতে এই নিউজলেটারটি পড়ুন। SafePay টিম",
+        "translated_text_excerpt": "Read this newsletter to learn about the new features and offers that will be added to SafePay this month."
+      },
+      {
+        "id": 297,
+        "language": "ben_Beng",
+        "language_name": "Bengali",
+        "label": 0,
+        "baseline_pred": 0,
+        "path_b_pred": 1,
+        "baseline_phishing_prob": 45.69,
+        "translated_phishing_prob": 62.34,
+        "source_text_excerpt": "TrustBank মাসিক নিউজলেটার - 22/03/2026 / প্রিয় গ্রাহক, এই মাসে TrustBank তে যুক্ত হওয়া নতুন সুবিধা ও অফার সম্পর্কে জানতে এই নিউজলেটারটি পড়ুন। TrustBank টিম",
+        "translated_text_excerpt": "TrustBank Monthly Newsletter - 22/03/2026 Dear customers, read this newsletter to learn about the new benefits and offers that will be added to TrustBank this month."
+      },
+      {
+        "id": 303,
+        "language": "guj_Gujr",
+        "language_name": "Gujarati",
+        "label": 1,
+        "baseline_pred": 1,
+        "path_b_pred": 0,
+        "baseline_phishing_prob": 64.82,
+        "translated_phishing_prob": 15.21,
+        "source_text_excerpt": "તાત્કાલિક ચુકવણી જરૂરી છે / નમસ્તે સુરેશ, હું અત્યારે મીટિંગમાં છું અને તાત્કાલિક ₹25000 જોડાયેલ ખાતામાં મોકલવાની જરૂર છે. કૃપા કરીને જલદી પુષ્ટિ કરો. આભાર, મેનેજમેન્ટ",
+        "translated_text_excerpt": "I am currently in a meeting and need to send ₹25000 to the connected account immediately. Please confirm as soon as possible."
+      }
+    ],
+    "examples_b_correct_a_wrong": [
+      {
+        "id": 201,
+        "language": "ben_Beng",
+        "language_name": "Bengali",
+        "label": 0,
+        "baseline_pred": 1,
+        "path_b_pred": 0,
+        "baseline_phishing_prob": 52.9,
+        "translated_phishing_prob": 13.94,
+        "source_text_excerpt": "আপনার অর্ডার #ORD500059 পাঠানো হয়েছে / প্রিয় নেহা, আপনার অর্ডার #ORD500059 QuickShop থেকে পাঠানো হয়েছে এবং 19/09/2026 এর মধ্যে আপনার ঠিকানায় পৌঁছে যাবে। অর্ডার ট্র্যাক করতে আমাদের ওয়েবসাইটে লগইন করুন। ধন্যবাদ, QuickShop টিম",
+        "translated_text_excerpt": "Your order #ORD500059 has been sent dear Neha, your order #ORD500059 has been sent from QuickShop and will arrive at your address by 19/09/2026."
+      },
+      {
+        "id": 202,
+        "language": "ben_Beng",
+        "language_name": "Bengali",
+        "label": 0,
+        "baseline_pred": 1,
+        "path_b_pred": 0,
+        "baseline_phishing_prob": 57.66,
+        "translated_phishing_prob": 25.84,
+        "source_text_excerpt": "আপনার অর্ডার #ORD500071 পাঠানো হয়েছে / প্রিয় স্বাতী, আপনার অর্ডার #ORD500071 SafePay থেকে পাঠানো হয়েছে এবং 30/05/2026 এর মধ্যে আপনার ঠিকানায় পৌঁছে যাবে। অর্ডার ট্র্যাক করতে আমাদের ওয়েবসাইটে লগইন করুন। ধন্যবাদ, SafePay টিম",
+        "translated_text_excerpt": "Your order #ORD500071 has been sent dear wife, your order #ORD500071 has been sent from SafePay and will arrive at your address by 30/05/2026."
+      },
+      {
+        "id": 204,
+        "language": "ben_Beng",
+        "language_name": "Bengali",
+        "label": 1,
+        "baseline_pred": 0,
+        "path_b_pred": 1,
+        "baseline_phishing_prob": 20.82,
+        "translated_phishing_prob": 99.13,
+        "source_text_excerpt": "জরুরি: আপনার QuickShop অ্যাকাউন্ট যাচাই করুন / প্রিয় গ্রাহক, আপনার অ্যাকাউন্টে অস্বাভাবিক কার্যকলাপ পাওয়া গেছে। ২৪ ঘণ্টার মধ্যে এই লিংকে গিয়ে অ্যাকাউন্ট যাচাই করুন, অন্যথায় অ্যাকাউন্ট স্থগিত করা হবে: verify-account-service.org",
+        "translated_text_excerpt": "Emergency: Verify your QuickShop account dear customer, there has been unusual activity on your account."
+      },
+      {
+        "id": 208,
+        "language": "ben_Beng",
+        "language_name": "Bengali",
+        "label": 0,
+        "baseline_pred": 1,
+        "path_b_pred": 0,
+        "baseline_phishing_prob": 57.66,
+        "translated_phishing_prob": 10.5,
+        "source_text_excerpt": "আপনার অর্ডার #ORD500065 পাঠানো হয়েছে / প্রিয় পূজা, আপনার অর্ডার #ORD500065 SafePay থেকে পাঠানো হয়েছে এবং 30/05/2026 এর মধ্যে আপনার ঠিকানায় পৌঁছে যাবে। অর্ডার ট্র্যাক করতে আমাদের ওয়েবসাইটে লগইন করুন। ধন্যবাদ, SafePay টিম",
+        "translated_text_excerpt": "Your order #ORD500065 has been sent dear Puza, your order #ORD500065 has been sent from SafePay and will arrive at your address by 30/05/2026."
+      },
+      {
+        "id": 210,
+        "language": "ben_Beng",
+        "language_name": "Bengali",
+        "label": 0,
+        "baseline_pred": 1,
+        "path_b_pred": 0,
+        "baseline_phishing_prob": 55.1,
+        "translated_phishing_prob": 1.83,
+        "source_text_excerpt": "SafePay ইনভয়েস #ORD500056 - পেমেন্ট নিশ্চিতকরণ / প্রিয় সুরেশ, আপনার সাম্প্রতিক কেনাকাটার জন্য ইনভয়েস নম্বর ORD500056 সংযুক্ত করা হলো। মোট পরিমাণ ₹7500 16/11/2026 তারিখে আপনার অ্যাকাউন্ট থেকে কেটে নেওয়া হয়েছে। প্রশ্নের জন্য গ্রাহক সেবার সাথে যোগাযোগ করুন। ধন্যবাদান্তে, SafePay",
+        "translated_text_excerpt": "SafePay Invoice #ORD500056 - Payment Assurance Dear Siresh, the invoice number ORD500056 has been attached for your recent purchase."
+      },
+      {
+        "id": 223,
+        "language": "ben_Beng",
+        "language_name": "Bengali",
+        "label": 0,
+        "baseline_pred": 1,
+        "path_b_pred": 0,
+        "baseline_phishing_prob": 53.55,
+        "translated_phishing_prob": 2.52,
+        "source_text_excerpt": "আগামীকালের টিম মিটিংয়ের এজেন্ডা / প্রিয় টিম, আগামীকাল 25/07/2026 তারিখে অনুষ্ঠিত মিটিংয়ের এজেন্ডা সংযুক্ত করা হলো। অনুগ্রহ করে সময়মতো যোগ দিন এবং আপনার সাপ্তাহিক আপডেট প্রস্তুত রাখুন। ধন্যবাদ, বিকাশ",
+        "translated_text_excerpt": "Dear team, the agenda of the meeting held on 25/07/2026 has been attached. Please join in on time and keep your weekly updates ready."
+      },
+      {
+        "id": 224,
+        "language": "ben_Beng",
+        "language_name": "Bengali",
+        "label": 0,
+        "baseline_pred": 1,
+        "path_b_pred": 0,
+        "baseline_phishing_prob": 55.1,
+        "translated_phishing_prob": 3.65,
+        "source_text_excerpt": "CloudMail ইনভয়েস #ORD500060 - পেমেন্ট নিশ্চিতকরণ / প্রিয় পূজা, আপনার সাম্প্রতিক কেনাকাটার জন্য ইনভয়েস নম্বর ORD500060 সংযুক্ত করা হলো। মোট পরিমাণ ₹7500 16/11/2026 তারিখে আপনার অ্যাকাউন্ট থেকে কেটে নেওয়া হয়েছে। প্রশ্নের জন্য গ্রাহক সেবার সাথে যোগাযোগ করুন। ধন্যবাদান্তে, CloudMail",
+        "translated_text_excerpt": "CloudMail Invoice #ORD500060 - Payment confirmation Dear Puza, The invoice number ORD500060 has been attached for your recent purchase."
+      },
+      {
+        "id": 226,
+        "language": "ben_Beng",
+        "language_name": "Bengali",
+        "label": 1,
+        "baseline_pred": 0,
+        "path_b_pred": 1,
+        "baseline_phishing_prob": 20.82,
+        "translated_phishing_prob": 97.9,
+        "source_text_excerpt": "সতর্কতা: আপনার SwiftCourier অ্যাকাউন্ট বন্ধ করে দেওয়া হবে / প্রিয় ব্যবহারকারী, পেমেন্ট তথ্যের সমস্যার কারণে আপনার অ্যাকাউন্ট ২৪ ঘণ্টার মধ্যে স্থায়ীভাবে বন্ধ হয়ে যাবে। অ্যাকাউন্ট সক্রিয় রাখতে এখনই ক্লিক করুন: verify-account-service.org",
+        "translated_text_excerpt": "Warning: Your SwiftCourier account will be closed Dear User, due to payment information issues your account will be permanently closed within 24 hours."
+      },
+      {
+        "id": 236,
+        "language": "ben_Beng",
+        "language_name": "Bengali",
+        "label": 1,
+        "baseline_pred": 0,
+        "path_b_pred": 1,
+        "baseline_phishing_prob": 20.82,
+        "translated_phishing_prob": 97.9,
+        "source_text_excerpt": "সতর্কতা: আপনার TrustBank অ্যাকাউন্ট বন্ধ করে দেওয়া হবে / প্রিয় ব্যবহারকারী, পেমেন্ট তথ্যের সমস্যার কারণে আপনার অ্যাকাউন্ট ২৪ ঘণ্টার মধ্যে স্থায়ীভাবে বন্ধ হয়ে যাবে। অ্যাকাউন্ট সক্রিয় রাখতে এখনই ক্লিক করুন: verify-account-service.org",
+        "translated_text_excerpt": "Warning: Your TrustBank account will be closed Dear User, due to payment information issues your account will be permanently closed within 24 hours."
+      },
+      {
+        "id": 257,
+        "language": "ben_Beng",
+        "language_name": "Bengali",
+        "label": 0,
+        "baseline_pred": 1,
+        "path_b_pred": 0,
+        "baseline_phishing_prob": 52.9,
+        "translated_phishing_prob": 0.52,
+        "source_text_excerpt": "আগামীকালের টিম মিটিংয়ের এজেন্ডা / প্রিয় টিম, আগামীকাল 19/09/2026 তারিখে অনুষ্ঠিত মিটিংয়ের এজেন্ডা সংযুক্ত করা হলো। অনুগ্রহ করে সময়মতো যোগ দিন এবং আপনার সাপ্তাহিক আপডেট প্রস্তুত রাখুন। ধন্যবাদ, নেহা",
+        "translated_text_excerpt": "Dear team, the agenda of the meeting held on 19/09/2026 has been attached. Please join in on time and keep your weekly updates ready. Thank you, Neha"
+      }
+    ]
+  }
+}

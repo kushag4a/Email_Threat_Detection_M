@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 from concurrent.futures import Future, ThreadPoolExecutor
 
-from backend.app.services.geolocation import get_ip_geolocation
+from backend.app.services.geolocation import get_ip_geolocation, is_globally_routable_ip
 from backend.app.services.store import STORE
 
 logger = logging.getLogger("email_threat_platform.geo_enrichment")
@@ -64,6 +64,22 @@ def enqueue_geo_enrichment(
         )
         return
 
+    # Do not enqueue private, reserved, test-net, or otherwise non-global
+    # addresses. This keeps synthetic fixtures and internal relay hops out
+    # of the external provider path and gives the UI an accurate state.
+    if not is_globally_routable_ip(ip):
+        STORE.update_result_enrichment(
+            session_id=session_id,
+            provider=provider,
+            account_id=account_id,
+            message_id=message_id,
+            enrichment={
+                "geo": [],
+                "geo_status": "not_applicable",
+            },
+        )
+        return
+
     task_key = f"{session_id}:{provider}:{account_id}:{message_id}"
 
     future = _GEO_POOL.submit(
@@ -94,6 +110,21 @@ def _do_enrichment(
     """Runs in a background thread. Never raises — failures are recorded."""
     try:
         geo = get_ip_geolocation(ip)
+
+        # A non-global address is an intentional non-applicable state, not
+        # a successful geographic lookup.
+        if not is_globally_routable_ip(ip):
+            STORE.update_result_enrichment(
+                session_id=session_id,
+                provider=provider,
+                account_id=account_id,
+                message_id=message_id,
+                enrichment={
+                    "geo": [],
+                    "geo_status": "not_applicable",
+                },
+            )
+            return
 
         # Add infrastructure-appropriate note
         geo["note"] = (

@@ -36,7 +36,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import multiprocessing
 import threading
 import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
@@ -85,14 +84,36 @@ IO_POOL = ThreadPoolExecutor(max_workers=MAX_CONCURRENT_ANALYSES, thread_name_pr
 _CPU_POOL: ProcessPoolExecutor | None = None
 _CPU_POOL_LOCK = threading.Lock()
 
+# IMPORTANT: Uvicorn --reload starts the actual application server in a
+# spawned child process on Windows, so `current_process().name ==
+# "MainProcess"` is NOT a valid way to identify the application process.
+# Instead, mark only the actual ProcessPoolExecutor workers with an
+# initializer. The application/reloader/server process is allowed to
+# create the single CPU pool; its pool workers are explicitly marked so
+# accidental nested pool creation still fails loudly.
+_IS_CPU_WORKER = False
+
+
+def _mark_cpu_worker() -> None:
+    """ProcessPool initializer: mark this process as a CPU worker."""
+    global _IS_CPU_WORKER
+    _IS_CPU_WORKER = True
+
 
 def get_cpu_pool() -> ProcessPoolExecutor:
-    """Lazily create the single, process-wide CPU_POOL (main process only)."""
+    """Lazily create one CPU pool in the application process.
+
+    This must work when the FastAPI server itself was spawned by
+    Uvicorn's Windows reloader. CPUPool workers are identified by the
+    explicit initializer above rather than by multiprocessing process
+    name, because Uvicorn's server process is also a spawned process on
+    Windows.
+    """
     global _CPU_POOL
     if _CPU_POOL is not None:
         return _CPU_POOL
 
-    if multiprocessing.current_process().name != "MainProcess":
+    if _IS_CPU_WORKER:
         raise RuntimeError(
             "Refusing to create a nested ProcessPoolExecutor inside a "
             "worker process. This should never happen - worker "
@@ -101,7 +122,10 @@ def get_cpu_pool() -> ProcessPoolExecutor:
 
     with _CPU_POOL_LOCK:
         if _CPU_POOL is None:
-            _CPU_POOL = ProcessPoolExecutor(max_workers=3)
+            _CPU_POOL = ProcessPoolExecutor(
+                max_workers=3,
+                initializer=_mark_cpu_worker,
+            )
     return _CPU_POOL
 
 

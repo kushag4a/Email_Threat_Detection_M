@@ -1,0 +1,27 @@
+From: Accounts Payable <billing@example-vendor.test>
+To: procurement@example-company.test
+Date: Fri, 11 Sep 2026 10:08:44 +0530
+Subject: Invoice 48117 - payment overdue
+Message-ID: <20260911100844.003@example-vendor.test>
+Reply-To: collections@example-attacker.test
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="BOUNDARY-48117"
+
+--BOUNDARY-48117
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 7bit
+
+Please find attached the outstanding invoice.
+Payment is overdue and must be confirmed today.
+Please open the attached document and follow the instructions for remittance.
+
+[SYNTHETIC TEST MESSAGE]
+
+--BOUNDARY-48117
+Content-Type: application/octet-stream; name="Invoice_48117.pdf.exe"
+Content-Disposition: attachment; filename="Invoice_48117.pdf.exe"
+Content-Transfer-Encoding: base64
+
+U1lOVEhFVElDLVBBWUxPQUQtVEVTVA==
+
+--BOUNDARY-48117--

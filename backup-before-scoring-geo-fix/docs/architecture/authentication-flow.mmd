@@ -1,0 +1,51 @@
+%% authentication-flow.mmd
+%% CURRENT code paths. Google and Microsoft shown as separate,
+%% structurally parallel flows, per the actual separate implementations
+%% in google_oauth.py and microsoft_oauth.py.
+flowchart TD
+    START([Browser]) --> CLICK_G["Click 'Connect Gmail'<br/>window.location.href = /auth/google/login"]
+    START --> CLICK_M["Click 'Connect Microsoft'<br/>window.location.href = /auth/microsoft/login"]
+
+    subgraph GOOGLE["Google OAuth (CURRENT code, NOT LIVE-VERIFIED - no network in dev env)"]
+        GL["GET /auth/google/login<br/>is_configured() check -> 503 if missing env vars"]
+        GL --> GSESS["get_or_create_session()<br/>sets signed eta_session cookie<br/>directly on the redirect response"]
+        GSESS --> GSTATE["_PENDING_STATE[state] = session_id<br/>(CSRF binding)"]
+        GSTATE --> GREDIR["302 redirect to Google consent screen"]
+        GREDIR --> GCONSENT[User approves on Google's site]
+        GCONSENT --> GCB["GET /auth/google/callback?code&state"]
+        GCB --> GVALID{"state in _PENDING_STATE?"}
+        GVALID -->|No| G400["HTTP 400<br/>'Unknown or expired OAuth state'"]
+        GVALID -->|Yes| GEXCH["flow.fetch_token(...)<br/>google-auth-oauthlib token exchange"]
+        GEXCH --> GPROV["GmailProvider(credentials)<br/>get_current_user() -> 1 Gmail API call"]
+        GPROV --> GSTORE["SESSION_STORE[session_id]['google'] =<br/>{credentials, email}"]
+        GSTORE --> GDONE["302 redirect to /"]
+    end
+
+    subgraph MSFT["Microsoft OAuth (CURRENT code, NOT LIVE-VERIFIED - no credentials available)"]
+        ML["GET /auth/microsoft/login<br/>is_configured() check -> 503 if missing env vars"]
+        ML --> MSESS["get_or_create_session()<br/>same cookie pattern as Google"]
+        MSESS --> MSTATE["_PENDING_STATE[state] = session_id<br/>(CSRF binding, separate dict from Google's)"]
+        MSTATE --> MREDIR["302 redirect to Microsoft consent screen<br/>via msal.get_authorization_request_url()"]
+        MREDIR --> MCONSENT[User approves on Microsoft's site]
+        MCONSENT --> MCB["GET /auth/microsoft/callback?code&state"]
+        MCB --> MVALID{"state in _PENDING_STATE?"}
+        MVALID -->|No| M400["HTTP 400"]
+        MVALID -->|Yes| MEXCH["msal acquire_token_by_authorization_code()"]
+        MEXCH --> MCHECK{"access_token in result?"}
+        MCHECK -->|No| M400b["HTTP 400"]
+        MCHECK -->|Yes| MPROV["MicrosoftGraphProvider(access_token)<br/>get_current_user() -> GET /me"]
+        MPROV --> MSTORE["SESSION_STORE[session_id]['microsoft'] =<br/>{access_token, refresh_token, email}"]
+        MSTORE --> MDONE["302 redirect to /"]
+    end
+
+    CLICK_G --> GL
+    CLICK_M --> ML
+
+    GDONE --> RELOAD["Browser: GET / (full page load)"]
+    MDONE --> RELOAD
+
+    RELOAD --> REFRESH["app.js: refreshConnectionStatus()<br/>runs unconditionally on every page load"]
+    REFRESH --> STATUS["GET /auth/google/status<br/>GET /auth/microsoft/status<br/>(both called, first connected:true wins)"]
+    STATUS --> UI["Dashboard shows connected account,<br/>NO second login click needed"]
+
+    LOGOUT["POST /auth/{provider}/logout"] --> CLEAR["clear_provider():<br/>del SESSION_STORE[session_id][provider]<br/>(session_id itself is NOT deleted)"]

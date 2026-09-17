@@ -1,0 +1,15 @@
+From: IT Helpdesk <helpdesk@example-attacker.test>
+To: employee@example-company.test
+Date: Fri, 11 Sep 2026 10:20:55 +0530
+Subject: MFA re-registration required
+Message-ID: <20260911102055.006@example-attacker.test>
+MIME-Version: 1.0
+Content-Type: text/html; charset=UTF-8
+
+<html><body>
+<p>Your multi-factor authentication device must be re-registered.</p>
+<p>Use the secure portal:</p>
+<p><a href="https://safe.example-attacker.test@signin.example-company-security.test/verify?token=TEST123">https://safe.example-attacker.test@signin.example-company-security.test/verify</a></p>
+<p>Failure to complete verification may result in a temporary lock.</p>
+<p>[SYNTHETIC TEST — URL IS NON-FUNCTIONAL]</p>
+</body></html>

@@ -19,6 +19,7 @@ import time
 from backend.app.forensic.m1_header_analyzer import analyze_email as m1_analyze
 from backend.app.schemas.email_message import NormalizedEmail
 from backend.app.services.attachment_analysis import analyze_attachments
+from backend.app.services.bec_detector import detect_bec
 from backend.app.services.geolocation import get_ip_geolocation
 from backend.app.services.m1_adapter import prepare_m1_input
 from backend.app.services.ml_classifier import build_analysis_text, classify_email
@@ -98,6 +99,14 @@ def analyze_normalized_email(email: NormalizedEmail) -> dict:
     m3_result = analyze_threat_intelligence(ips=ips, urls=email.urls)
     timer.mark("m3")
 
+    # ---------------- Deterministic BEC pattern detection ----------------
+    # Independent of the ML models and of threat_classifier.py's cheap
+    # single-word keyword scan (m2["rule_based_threats"]) - see
+    # bec_detector.py. Uses the same analysis_text the ML models see
+    # (headers + body/visible-text).
+    bec_result = detect_bec(analysis_text)
+    timer.mark("bec")
+
     # ---------------- M4: geolocation / infrastructure ----------------
     # Deferred for background enrichment so slow external lookups
     # cannot block the primary threat-analysis path.
@@ -111,6 +120,7 @@ def analyze_normalized_email(email: NormalizedEmail) -> dict:
         m3=m3_result,
         header_analysis=header_analysis,
         attachment_analysis=attachment_result,
+        bec_analysis=bec_result,
     )
     timer.mark("risk")
     timer.log(email.message_id)
@@ -122,6 +132,8 @@ def analyze_normalized_email(email: NormalizedEmail) -> dict:
         evidence_sources.append("spamhaus_drop_local_feed")
     if m3_result.get("local_heuristics"):
         evidence_sources.append("local_heuristics")
+    if bec_result.get("categories"):
+        evidence_sources.append("deterministic_bec_detector")
     if geo_results:
         evidence_sources.append("ip_geolocation")
     if attachment_result["scanned"] and any(i["yara"]["scanned"] for i in attachment_result["items"]):
@@ -139,6 +151,23 @@ def analyze_normalized_email(email: NormalizedEmail) -> dict:
         "has_high_severity": attachment_result["has_high_severity"],
         "high_severity_filenames": attachment_result["high_severity_filenames"],
     }
+
+    # ---------------- API contract prep (frontend explainability) ----------------
+    # calculate_risk() already returns everything the future frontend
+    # needs to render "RISK SCORE / WHY / SCORE CALCULATION / ACTIVE
+    # SCORING POLICY" (see risk_engine.py's `calculation` key: raw vs
+    # final score, per-signal contributions with the multiplier
+    # actually used, caps_applied, floors_applied, thresholds). This
+    # is surfaced here as top-level `risk_calculation` and
+    # `risk_config_version` fields so a frontend can render them
+    # without reaching into `risk` internals, while `risk` itself
+    # keeps its existing score/level/reasons/contributing_modules
+    # shape for backward compatibility with any existing caller. No
+    # frontend redesign is implemented here - see TASK 4 - this is
+    # API-contract preparation only.
+    risk_calculation = risk.get("calculation")
+    risk_config_version = risk.get("config_version")
+    threat_types = risk.get("threat_types", [])
 
     return {
         "message_id": email.message_id,
@@ -158,12 +187,16 @@ def analyze_normalized_email(email: NormalizedEmail) -> dict:
         "m2": m2_result,
         "m3": m3_result,
         "m4": geo_results,
-        "geo_status": "pending",  # Background enrichment will update this
+        "geo_status": "pending" if m1_result.get("origin_ip") else "not_applicable",
         "urls": email.urls,
         "attachments_present": bool(email.attachments),
         "attachments": attachments_output,
         "attachment_analysis": attachment_summary,
         "risk": risk,
+        "risk_calculation": risk_calculation,
+        "risk_config_version": risk_config_version,
+        "threat_types": threat_types,
+        "bec_analysis": bec_result,
         "evidence_sources": evidence_sources,
         "status": "analyzed",
         "error": None,
@@ -191,6 +224,9 @@ def analyze_email_safe(email: NormalizedEmail) -> dict:
                 "date": email.date,
             },
             "risk": {"score": 0, "level": "UNKNOWN", "reasons": [], "contributing_modules": []},
+            "risk_calculation": None,
+            "risk_config_version": None,
+            "threat_types": [],
             "status": "analysis_failed",
             "error": str(exc),
             "analyzed_at": datetime.datetime.utcnow().isoformat() + "Z",

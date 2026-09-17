@@ -9,6 +9,34 @@ gmail_pipeline.py), plus the rule-based keyword classifier
 
 Models are loaded once at import time, matching the original
 gmail_pipeline.py behavior.
+
+--------------------------------------------------------------------
+PRODUCTION MODEL WIRING (2026 risk-hardening review)
+--------------------------------------------------------------------
+The approved final ML decision is: the PHISHING (binary) model is
+V2 (backend/app/models/v2/) - not V2.1 (backend/app/models/v2_1/,
+evaluated and NOT promoted) and not the older V1 snapshot preserved
+at backend/app/models/v1_current/ for rollback.
+
+Prior to this fix, this loader read phishing_model.pkl /
+phishing_vectorizer.pkl from the flat MODELS_DIR
+(backend/app/models/), which was verified (sha256) to still contain
+the V1 artifacts - i.e. the "V2 is final" decision had never actually
+been wired into the running application. See
+PHISHING_MODEL_DIR below: it now points explicitly at
+backend/app/models/v2/, the single source of truth for which
+phishing model is live. This is a path/config change only - no
+model files were copied, retrained, or deleted; the flat
+backend/app/models/phishing_model.pkl / phishing_vectorizer.pkl
+files still exist (identical to v1_current/) as an inert historical/
+rollback copy, and are no longer read by this module.
+
+The MULTITHREAT (multi-class category) model is a SEPARATE model
+from the phishing V2/V2.1 decision above. No V2 (or any newer)
+version of the multithreat model was trained or evaluated as part of
+this review - backend/app/models/v2/ and v2_1/ contain phishing-model
+artifacts only. It therefore continues to load from the flat
+MODELS_DIR, unchanged, exactly as before.
 """
 
 from pathlib import Path
@@ -21,9 +49,18 @@ from backend.app.services.threat_classifier import detect_threats
 
 MODELS_DIR = Path(__file__).parent.parent / "models"
 
-_phishing_model = joblib.load(MODELS_DIR / "phishing_model.pkl")
-_phishing_vectorizer = joblib.load(MODELS_DIR / "phishing_vectorizer.pkl")
+# Approved production phishing model - see docstring above. Change
+# this single constant (and only this constant) to promote a future
+# phishing model version; do not point it back at MODELS_DIR without
+# first re-verifying (by hash) which artifact actually lives there.
+PHISHING_MODEL_DIR = MODELS_DIR / "v2"
 
+_phishing_model = joblib.load(PHISHING_MODEL_DIR / "phishing_model.pkl")
+_phishing_vectorizer = joblib.load(PHISHING_MODEL_DIR / "phishing_vectorizer.pkl")
+
+# Multithreat model - unrelated to the phishing V2/V2.1 decision;
+# no newer version exists, so this intentionally still loads from the
+# flat MODELS_DIR.
 _multithreat_model = joblib.load(MODELS_DIR / "multithreat_model.pkl")
 _multithreat_vectorizer = joblib.load(MODELS_DIR / "multithreat_vectorizer.pkl")
 
@@ -104,11 +141,20 @@ def classify_email(analysis_text: str, *, force_rule_based: bool = False) -> dic
         for category, probability in zip(threat_classes, threat_probabilities)
     }
 
+    # BUG FIX (rule-based detection previously gated behind ML
+    # confidence - see MERGE_LOG.md Task 3): detect_threats() is a
+    # cheap keyword scan (a handful of `in` checks over the message
+    # text), not an expensive deep scan, so there is no performance
+    # reason to skip it. Gating it behind phishing_probability >= 40%
+    # meant a message the ML model was unsure about never got scanned
+    # for BEC/credential-theft/financial-fraud keyword patterns at all,
+    # silently dropping a whole independent evidence source exactly
+    # when the model's own signal was weakest. It now always runs;
+    # `forensics_triggered` is kept as an informational flag (also
+    # still forced True by a high-severity attachment finding) rather
+    # than as a gate on rule_based_threats.
     forensics_triggered = phishing_probability >= FORENSICS_TRIGGER_THRESHOLD or force_rule_based
-
-    rule_based_threats = {}
-    if forensics_triggered:
-        rule_based_threats = detect_threats(analysis_text)
+    rule_based_threats = detect_threats(analysis_text)
 
     top_category = max(threat_categories, key=threat_categories.get)
 

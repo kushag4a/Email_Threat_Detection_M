@@ -469,7 +469,24 @@
   // DETAIL PANEL
   // ============================================================
 
-  function openDetailPanel(result) {
+  async function openDetailPanel(result) {
+    // The primary verdict is persisted before background geo enrichment.
+    // Re-fetch the latest stored result when a persisted identity is
+    // available so the detail panel does not remain stuck on an older
+    // geo_status/m4 snapshot captured while enrichment was still pending.
+    if (result && result.provider && result.account_id && result.message_id) {
+      try {
+        const fresh = await apiGet(
+          `/api/analysis/${encodeURIComponent(result.provider)}/${encodeURIComponent(result.account_id)}/${encodeURIComponent(result.message_id)}`
+        );
+        result = fresh || result;
+        state.resultsByMessageId[result.message_id] = result;
+      } catch (_) {
+        // Keep rendering the already-loaded result if the refresh races
+        // with a scan/store update or the analysis record is unavailable.
+      }
+    }
+
     const email = result.email || {};
     const m1 = result.m1 || {};
     const m2 = result.m2 || {};
@@ -493,10 +510,22 @@
       return rows.join("");
     };
 
-    const geoRows = () =>
-      (m4 || []).map((g) =>
+    const geoRows = () => {
+      const rows = (m4 || []).map((g) =>
         `<li>${escapeHtml(g.ip)}: ${escapeHtml(g.city)}, ${escapeHtml(g.region)}, ${escapeHtml(g.country)} \u2014 ${escapeHtml(g.organization)}<br><em>${escapeHtml(g.note || "")}</em></li>`
-      ).join("") || "<li>No public origin IP was available for geolocation.</li>";
+      ).join("");
+      if (rows) return rows;
+
+      const status = result.geo_status || "not_applicable";
+      if (status === "pending") return "<li>Geolocation enrichment in progress…</li>";
+      if (status === "failed") return "<li>Geolocation lookup failed. The primary risk verdict is unchanged.</li>";
+      if (status === "not_applicable") {
+        return m1.origin_ip
+          ? "<li>No globally routable origin IP was available for geolocation.</li>"
+          : "<li>No origin IP could be extracted from the received headers.</li>";
+      }
+      return "<li>No geolocation data is available.</li>";
+    };
 
     const attachmentAnalysis = result.attachment_analysis || {};
     const attachmentChips = !attachmentAnalysis.scanned
@@ -515,6 +544,11 @@
 
     const reasonsList = (risk.reasons || []).map((r) => `<li>${escapeHtml(r)}</li>`).join("") || "<li>No reasons recorded.</li>";
     const evidenceList = (result.evidence_sources || []).map((s) => `<li>${escapeHtml(s)}</li>`).join("") || "<li>None</li>";
+    const threatTypeChips = (result.threat_types || []).map((t) => `<span class="attachment-chip">${escapeHtml(t)}</span>`).join("") || "<span class=\"muted-note\">No specific threat types identified from deterministic evidence.</span>";
+    const overridesApplied = ((risk.calculation || {}).overrides_applied || []);
+    const overridesNote = overridesApplied.length
+      ? `<p class="muted-note"><strong>Deterministic evidence controlled the final severity:</strong> ${overridesApplied.map((o) => escapeHtml(o.evidence)).join("; ")}.</p>`
+      : "";
 
     el["detail-panel-body"].innerHTML = `
       <div class="detail-section">
@@ -530,6 +564,9 @@
       <div class="detail-section">
         <h3>Risk</h3>
         <p>${riskBadge(risk)} <strong>${risk.score ?? "\u2014"}/100</strong></p>
+        ${overridesNote}
+        <p><strong>Threat types:</strong></p>
+        <p>${threatTypeChips}</p>
         <ul class="reasons-list">${reasonsList}</ul>
       </div>
       <div class="detail-section">

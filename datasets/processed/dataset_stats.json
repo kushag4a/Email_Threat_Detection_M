@@ -1,0 +1,47 @@
+{
+  "random_state": 42,
+  "split_strategy": "80/10/10 stratified split after exact normalized-text deduplication",
+  "sources_used": [
+    "puyang2025/seven-phishing-email-datasets/train.parquet",
+    "zefang-liu/phishing-email-dataset/Phishing_Email.csv",
+    "Navyasri17/phishing_emails-data/data/train-00000-of-00001.parquet"
+  ],
+  "datasets_not_used_for_training": [
+    "puyang2025/seven-phishing-email-datasets/test.parquet",
+    "puyang2025/seven-phishing-email-datasets/eval.parquet",
+    "Navyasri17/phishing_emails-data/data/test-00000-of-00001.parquet",
+    "talby/spamassassin"
+  ],
+  "cleaning": {
+    "rows_before_cleaning": 208009,
+    "removed_invalid_labels": 0,
+    "removed_empty_or_tiny": 590,
+    "removed_exact_duplicates": 1434,
+    "final_rows": 205985
+  },
+  "combined": {
+    "total": 205985,
+    "benign": 111026,
+    "phishing": 94959
+  },
+  "train": {
+    "total": 164788,
+    "benign": 88821,
+    "phishing": 75967
+  },
+  "validation": {
+    "total": 20598,
+    "benign": 11102,
+    "phishing": 9496
+  },
+  "test": {
+    "total": 20599,
+    "benign": 11103,
+    "phishing": 9496
+  },
+  "source_counts_combined": {
+    "seven-phishing-email": 161638,
+    "navyasri-phishing-email": 26946,
+    "zefang-phishing-email": 17401
+  }
+}
