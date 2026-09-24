@@ -222,7 +222,7 @@ Open **http://localhost:8000** — you can use `.eml` upload mode without config
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 
-The current suite has **384 tests passing**. Focused suites include:
+The current suite has **481 tests passing**. Focused suites include:
 
 ```bash
 .\.venv\Scripts\python.exe -m pytest tests/test_risk_engine_config.py -q
