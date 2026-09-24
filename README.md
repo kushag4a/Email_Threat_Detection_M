@@ -9,7 +9,7 @@ Provider-independent email security research platform combining machine learning
 <p>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.x-blue.svg">
   <img alt="Backend" src="https://img.shields.io/badge/Backend-FastAPI-009688.svg">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-384%20passing-brightgreen.svg">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-481%20passing-brightgreen.svg">
   <img alt="Status" src="https://img.shields.io/badge/status-active%20R%26D-yellow.svg">
 </p>
 
