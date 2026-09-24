@@ -409,7 +409,7 @@ The internal Python module names (`m1_header_analyzer.py`, variables named `m1_r
 ```mermaid
 classDiagram
     class MailProvider {
-        <<abstract>>
+        <abstract>
         +get_current_user()
         +list_messages(page_size, page_token)
         +get_message(message_id)
