@@ -1,277 +1,418 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="soc-dark">
+<html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>ValorProtects</title>
-<link rel="stylesheet" href="/assets/styles.css" />
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ValorProtects Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js" onerror="console.error('Failed to load Chart.js');"></script>
+<link rel="stylesheet" href="/assets/styles.css">
 </head>
 <body>
 
 <div class="app-shell">
-
-  <!-- ============ LEFT SIDEBAR ============ -->
-  <nav class="sidebar" aria-label="Primary navigation">
-    <div class="brand">
-      <span class="brand-mark" aria-hidden="true">&#9737;</span>
-      <span class="brand-name">ValorProtects</span>
-    </div>
-    <ul class="nav-list">
-      <li class="nav-item active" data-view="dashboard">Dashboard</li>
-      <li class="nav-item" data-view="inbox">Inbox</li>
-      <li class="nav-item" data-view="scans">Scans</li>
-      <li class="nav-item" data-view="intel">Threat Intelligence</li>
-      <li class="nav-item" data-view="cases">Cases</li>
-      <li class="nav-item" data-view="reports">Reports</li>
-      <li class="nav-item" data-view="custom-email">Custom Email</li>
-      <li class="nav-item" data-view="settings">Settings</li>
-    </ul>
-    <div class="sidebar-footer">
-      <span class="limitation-badge" title="In-memory demo storage; cleared on restart">DEMO MODE</span>
-    </div>
-  </nav>
-
-  <div class="main-column">
-
-    <!-- ============ TOP BAR ============ -->
-    <header class="topbar">
-      <div class="topbar-left">
-        <div class="provider-status" id="provider-status">
-          <span class="status-dot status-dot--off"></span>
-          <span id="provider-status-text">No mailbox connected</span>
+    <aside class="sidebar" id="sidebar">
+        <div class="logo-container">
+            <img src="/assets/valor-logo-full.png" alt="ValorProtects" class="logo-full">
+            <img src="/assets/valor-logo-mini.png" alt="ValorProtects" class="logo-mini">
         </div>
-      </div>
-      <div class="topbar-right">
-        <div class="connect-buttons" id="connect-buttons">
-          <button class="btn btn-secondary" id="connect-google">Connect Gmail</button>
-          <button class="btn btn-secondary" id="connect-microsoft">Connect Microsoft</button>
+        <button class="toggle-btn" id="toggleBtn"><i data-icon="chevron-left"></i></button>
+
+        <ul class="nav-links">
+            <li data-view="home"><i data-icon="home"></i> <span class="text">Home</span></li>
+            <li data-view="inbox"><i data-icon="inbox"></i> <span class="text">Inbox</span></li>
+            <li class="active" data-view="dashboard"><i data-icon="chart-pie"></i> <span class="text">Dashboard</span></li>
+            <li data-view="reports"><i data-icon="chart-line"></i> <span class="text">Reports</span></li>
+            <li data-view="custom"><i data-icon="grid"></i> <span class="text">Custom Mails</span></li>
+            <li data-view="user"><i data-icon="user"></i> <span class="text">User</span></li>
+            <li data-view="settings" id="settingsNavItem"><i data-icon="gear"></i> <span class="text">Setting</span><span class="nav-update-dot" style="display:none;"></span></li>
+            <li class="logout" id="logoutBtn"><i data-icon="logout"></i> <span class="text">Log Out</span></li>
+        </ul>
+
+        <div class="user-profile" id="userProfileShortcut">
+            <img id="userAvatar" src="" alt="User">
+            <div class="user-info">
+            </div>
         </div>
-        <button class="btn btn-icon" id="refresh-btn" title="Refresh mailbox" aria-label="Refresh mailbox">&#8635;</button>
-        <button class="btn btn-secondary" id="logout-btn" hidden>Logout</button>
-      </div>
-    </header>
+    </aside>
 
-    <!-- ============ TOAST / ERROR BANNER ============ -->
-    <div id="toast-container" class="toast-container" aria-live="polite"></div>
+    <main class="main-content" id="mainContent">
 
-    <!-- ============ VIEWS ============ -->
-    <main class="content">
+        <!-- ================= HOME VIEW ================= -->
+        <section class="view" id="view-home">
+            <header class="header-top">
+                <div class="header-titles">
+                    <h1>Home</h1>
+                    <p id="homeMailboxLine"></p>
+                    <p id="homeRefreshedLine" class="header-subline"></p>
+                </div>
+                <div class="search-container">
+                    <div class="search-box">
+                        <i data-icon="search" class="search-icon"></i>
+                        <input type="text" placeholder="Search Mails">
+                    </div>
+                    <button class="sync-btn" id="homeSyncBtn"><i data-icon="refresh"></i></button>
+                </div>
+            </header>
 
-      <!-- ---------------- DASHBOARD / INBOX (shared view) ---------------- -->
-      <section class="view active" data-view-id="dashboard">
-        <section class="summary-cards" aria-label="Threat summary">
-          <div class="summary-card summary-card--safe">
-            <div class="summary-value" id="count-low">0</div>
-            <div class="summary-label">LOW / SAFE</div>
-          </div>
-          <div class="summary-card summary-card--medium">
-            <div class="summary-value" id="count-medium">0</div>
-            <div class="summary-label">MEDIUM / SUSPICIOUS</div>
-          </div>
-          <div class="summary-card summary-card--high">
-            <div class="summary-value" id="count-high">0</div>
-            <div class="summary-label">HIGH RISK</div>
-          </div>
-          <div class="summary-card summary-card--critical">
-            <div class="summary-value" id="count-critical">0</div>
-            <div class="summary-label">CRITICAL</div>
-          </div>
+            <div class="home-stats" id="homeStats"></div>
+
+            <div class="home-body">
+                <div class="home-col">
+                    <div class="card">
+                        <div class="card-title">Quick actions</div>
+                        <div class="card-sub">Jump straight into the most common tasks.</div>
+                        <div class="quick-actions">
+                            <button class="quick-action-btn" data-action="scan-inbox"><i data-icon="scan"></i> Scan Inbox</button>
+                            <button class="quick-action-btn" data-action="custom-email"><i data-icon="file-import"></i> Custom Email</button>
+                            <button class="quick-action-btn" data-action="risky-mails"><i data-icon="warning"></i> Risky Mails</button>
+                            <button class="quick-action-btn" data-action="reports"><i data-icon="chart-line"></i> Reports</button>
+                        </div>
+                    </div>
+                    <div class="card" style="flex-grow:1; min-height:0; overflow-y:auto;">
+                        <div class="card-title">Recent detections</div>
+                        <div class="card-sub">Highest-risk messages from the latest scan.</div>
+                        <div id="recentDetections"></div>
+                    </div>
+                </div>
+                <div class="home-col">
+                    <div class="card" style="flex-grow:1; overflow-y:auto;">
+                        <div class="card-title">Recent activity</div>
+                        <div class="card-sub">What ValorProtects has been doing.</div>
+                        <div id="recentActivity"></div>
+                    </div>
+                </div>
+            </div>
         </section>
 
-        <section class="scan-controls" aria-label="Scan controls">
-          <div class="scan-controls-row">
-            <label for="page-size-select">Emails per page</label>
-            <select id="page-size-select">
-              <option value="5" selected>5</option>
-              <option value="10">10</option>
-              <option value="20">20</option>
-              <option value="50">50</option>
-              <option value="100">100</option>
-            </select>
+        <!-- ================= INBOX VIEW ================= -->
+        <section class="view" id="view-inbox">
+            <header class="header-top">
+                <div class="header-titles">
+                    <h1>Inbox</h1>
+                    <p id="inboxSubtitle">50 messages scanned</p>
+                    <p id="inboxRefreshedLine" class="header-subline"></p>
+                </div>
+                <div class="search-container">
+                    <div class="search-box">
+                        <i data-icon="search" class="search-icon"></i>
+                        <input type="text" placeholder="Search Mails" id="inboxHeaderSearch">
+                    </div>
+                    <button class="sync-btn" id="inboxSyncBtn" title="Sync mailbox"><i data-icon="refresh"></i></button>
+                </div>
+            </header>
 
-            <button class="btn btn-primary" id="scan-btn" disabled>Scan Inbox</button>
-
-            <div class="pagination" id="pagination">
-              <button class="btn btn-secondary" id="prev-page-btn" disabled>&larr; Previous</button>
-              <span id="page-indicator">Page 1</span>
-              <button class="btn btn-secondary" id="next-page-btn" disabled>Next &rarr;</button>
+            <div class="scan-progress" id="scanProgress">
+                <div class="scan-progress-text" id="scanProgressText">Scanning 0 / 50</div>
+                <div class="scan-progress-bar"><div class="scan-progress-fill" id="scanProgressFill"></div></div>
+                <div class="scan-progress-text" id="scanProgressDetail">Requested: 0 · Analyzed: 0 · Failed: 0 · Skipped: 0</div>
             </div>
-          </div>
 
-          <div class="scan-progress" id="scan-progress" hidden>
-            <div class="progress-bar-track">
-              <div class="progress-bar-fill" id="progress-bar-fill"></div>
+            <div class="inbox-toolbar">
+                <div class="mail-search"><i data-icon="search" class="search-icon" style="font-size:12px;"></i>
+                    <input type="text" id="inboxSearch" placeholder="Search sender, subject, threat type...">
+                </div>
+                <select id="filterSeverity">
+                    <option value="all">All severities</option>
+                    <option value="safe">Safe</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                    <option value="critical">Critical</option>
+                </select>
+                <select id="filterThreat">
+                    <option value="all">All threat types</option>
+                </select>
+                <select id="filterTrust">
+                    <option value="all">All senders</option>
+                    <option value="trusted">User-trusted</option>
+                    <option value="untrusted">Not trusted</option>
+                </select>
+                <select id="filterRead">
+                    <option value="all">Read &amp; Unread</option>
+                    <option value="unread">Unread only</option>
+                    <option value="read">Read only</option>
+                </select>
+                <button class="btn btn-primary btn-sm" id="scanInboxBtn"><i data-icon="scan"></i> Scan Inbox</button>
             </div>
-            <span id="progress-text">Scanning 0 / 0</span>
-          </div>
 
-          <div class="scan-summary" id="scan-summary" hidden></div>
+            <div class="inbox-table-wrap" id="inboxTableWrap">
+                <table class="mail-table">
+                    <thead>
+                        <tr><th>Sender</th><th>Subject</th><th>Date</th><th>Risk</th><th>Threat Type</th><th>Status</th></tr>
+                    </thead>
+                    <tbody id="inboxTbody"></tbody>
+                </table>
+            </div>
+
+            <div class="inbox-footer">
+                <div>
+                    Emails per page:
+                    <select id="pageSizeSelect">
+                        <option value="5">5</option>
+                        <option value="10">10</option>
+                        <option value="20" selected>20</option>
+                        <option value="50">50</option>
+                        <option value="100">100</option>
+                    </select>
+                    <span id="pageRangeLabel" style="margin-left:12px;"></span>
+                </div>
+                <div style="display:flex; gap:8px; align-items:center;">
+                    <button class="btn btn-ghost btn-sm" id="prevPageBtn"><i data-icon="chevron-left"></i> Previous</button>
+                    <span id="pageLabel">Page 1</span>
+                    <button class="btn btn-ghost btn-sm" id="nextPageBtn">Next <i data-icon="chevron-right"></i></button>
+                </div>
+            </div>
         </section>
 
-        <section class="connect-prompt" id="connect-prompt">
-          <h3>No mailbox connected</h3>
-          <p>Connect Gmail or Microsoft above, or use <strong>Custom Email</strong> in the sidebar to
-             analyze a <code>.eml</code> file with no account connection required.</p>
+        <!-- ================= DASHBOARD VIEW ================= -->
+        <section class="view active" id="view-dashboard">
+            <header class="header-top">
+                <div class="header-titles">
+                    <h1>Dashboard</h1>
+                    <p id="dashboardRefreshedLine" class="header-subline"></p>
+                </div>
+                <div class="search-container">
+                    <div class="search-box">
+                        <i data-icon="search" class="search-icon"></i>
+                        <input type="text" placeholder="Search Mails">
+                    </div>
+                    <button class="sync-btn" id="syncBtn"><i data-icon="refresh"></i></button>
+                </div>
+            </header>
+
+            <div class="pill-nav-container" id="pillNav">
+                <div class="pill-indicator" id="pillIndicator"></div>
+                <button class="pill-btn active" data-index="0">All mails</button>
+                <button class="pill-btn" data-index="1">Cases</button>
+                <button class="pill-btn" data-index="2">Risky Mails</button>
+                <button class="pill-btn" data-index="3">Geolocation</button>
+            </div>
+
+            <div class="dashboard-grid">
+                <div class="left-col">
+                    <div class="sliding-widget-area">
+                        <div class="sliding-widget-container" id="widgetContainer">
+                            <div class="widget-page">
+                                <div class="chart-header">
+                                    <h3>Analysis Report</h3>
+                                    <p class="chart-desc">Monitor the volume and threat classification of incoming emails across your selected timeframe.</p>
+                                    <div class="time-toggles">
+                                        <button class="time-btn" data-time="daily">Daily</button>
+                                        <button class="time-btn active" data-time="weekly">Weekly</button>
+                                        <button class="time-btn" data-time="monthly">Monthly</button>
+                                    </div>
+                                </div>
+                                <div style="flex-grow:1; position:relative;">
+                                    <canvas id="analysisChart"></canvas>
+                                </div>
+                            </div>
+
+                            <div class="widget-page" id="casesPage"></div>
+                            <div class="widget-page" id="riskyPage"></div>
+                            <div class="widget-page" id="geoPage"></div>
+                        </div>
+                    </div>
+
+                    <div class="bottom-widgets" id="bottomWidgets"></div>
+                </div>
+
+                <div class="right-col">
+                    <div class="threat-panel-view active" id="threatListView">
+                        <div class="threat-header-glass">
+                            <h3>Top threat vectors</h3>
+                            <p>Identified exploitation techniques across inbound<br>critical events.</p>
+                        </div>
+                        <div id="threatVectorList"></div>
+                    </div>
+                    <div class="threat-panel-view" id="threatDetailView"></div>
+                </div>
+            </div>
         </section>
 
-        <section class="email-table-wrap" aria-label="Scanned emails">
-          <table class="email-table" id="email-table">
-            <thead>
-              <tr>
-                <th scope="col">Sender</th>
-                <th scope="col">Subject</th>
-                <th scope="col">Date</th>
-                <th scope="col">Provider</th>
-                <th scope="col">Risk</th>
-                <th scope="col">Attachments</th>
-              </tr>
-            </thead>
-            <tbody id="email-table-body">
-              <tr class="empty-state-row">
-                <td colspan="6">
-                  <div class="empty-state">
-                    <p><strong>No emails loaded yet.</strong></p>
-                    <p>Connect a mailbox above to see your inbox.</p>
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+        <!-- ================= REPORTS VIEW ================= -->
+        <section class="view" id="view-reports">
+            <header class="header-top">
+                <div class="header-titles">
+                    <h1>Reports</h1>
+                    <p>Scan history &amp; risk analytics</p>
+                    <p id="reportRangeLine" class="header-subline">Scanned results · —</p>
+                </div>
+                <div class="search-container">
+                    <button class="btn btn-outline btn-sm" id="changeRangeBtn"><i data-icon="calendar"></i> Change range</button>
+                    <button class="btn btn-outline btn-sm" id="exportReportBtn"><i data-icon="file-export"></i> Export Report</button>
+                </div>
+            </header>
+            <div class="page-grid" style="margin-bottom:20px;">
+                <div class="card">
+                    <div class="card-title">Risk distribution</div>
+                    <div class="card-sub">Share of scanned mail by severity, this period.</div>
+                    <div id="riskDistribution"></div>
+                </div>
+                <div class="card">
+                    <div class="card-title">Top threat types</div>
+                    <div class="card-sub">Most frequently detected threat categories.</div>
+                    <div id="threatTypeBreakdown"></div>
+                </div>
+            </div>
+            <div class="card" style="flex-grow:1; min-height:0; overflow-y:auto;">
+                <div class="card-title">Scan history</div>
+                <div class="card-sub">Every inbox scan run by ValorProtects.</div>
+                <table class="simple-table" id="scanHistoryTable">
+                    <thead><tr><th>Scan</th><th>Date</th><th>Emails</th><th>Threats found</th><th></th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
         </section>
-      </section>
 
-      <!-- ---------------- SCANS ---------------- -->
-      <section class="view" data-view-id="scans">
-        <h2 class="view-title">Scans</h2>
-
-        <div class="panel">
-          <h3>Threat trend</h3>
-          <div id="trend-chart-wrap">
-            <p class="muted-note" id="trend-empty-note">No scan history yet in this session.</p>
-            <div class="trend-bars" id="trend-bars"></div>
-          </div>
-        </div>
-
-        <div class="panel">
-          <h3>Previous high-risk emails <span class="panel-subtitle" id="history-count-label"></span></h3>
-          <div id="history-list"><p class="muted-note">No high-risk emails recorded yet.</p></div>
-        </div>
-
-        <div class="panel">
-          <h3>Recurring suspicious sources</h3>
-          <div id="bad-sources-list"><p class="muted-note">Not enough data yet.</p></div>
-        </div>
-      </section>
-
-      <!-- ---------------- THREAT INTELLIGENCE ---------------- -->
-      <section class="view" data-view-id="intel">
-        <h2 class="view-title">Threat Intelligence</h2>
-        <p class="muted-note">Local intelligence only - no personal API keys are used or required.</p>
-        <div class="intel-cards" id="intel-cards"></div>
-      </section>
-
-      <!-- ---------------- CASES ---------------- -->
-      <section class="view" data-view-id="cases">
-        <h2 class="view-title">Cases</h2>
-        <p class="muted-note">Suspicious messages grouped by sending domain from this session's scans.</p>
-        <div id="cases-list"><p class="muted-note">No cases yet - high-risk detections will appear here.</p></div>
-      </section>
-
-      <!-- ---------------- REPORTS ---------------- -->
-      <section class="view" data-view-id="reports">
-        <h2 class="view-title">Reports</h2>
-        <div class="panel" id="reports-summary"></div>
-      </section>
-
-      <!-- ---------------- CUSTOM EMAIL ---------------- -->
-      <section class="view" data-view-id="custom-email">
-        <h2 class="view-title">Custom Email</h2>
-        <p class="muted-note">Analyze up to 10 <code>.eml</code> files directly - no mailbox connection required. Useful for the original1.eml / pinterest1.eml / SCOPE newsletter regression tests.</p>
-
-        <div class="dropzone" id="dropzone">
-          <p><strong>Drag &amp; drop</strong> up to 10 <code>.eml</code> files here</p>
-          <p>or</p>
-          <button class="btn btn-secondary" id="browse-files-btn">Browse files</button>
-          <input type="file" id="eml-file-input" accept=".eml,.txt" multiple hidden />
-        </div>
-
-        <div id="selected-files-list"></div>
-
-        <button class="btn btn-primary" id="analyze-batch-btn" disabled>Analyze All</button>
-
-        <div class="scan-summary" id="batch-summary" hidden></div>
-
-        <section class="email-table-wrap" style="margin-top:16px;">
-          <table class="email-table" id="batch-table">
-            <thead>
-              <tr>
-                <th>File</th><th>Sender</th><th>Subject</th><th>Risk</th>
-              </tr>
-            </thead>
-            <tbody id="batch-table-body"></tbody>
-          </table>
+        <!-- ================= CUSTOM MAILS VIEW ================= -->
+        <section class="view" id="view-custom">
+            <header class="header-top">
+                <div class="header-titles"><h1>Custom Mails</h1><p>Analyze a message outside your connected mailbox</p></div>
+            </header>
+            <div class="page-grid" style="align-items:start;">
+                <div class="card">
+                    <div class="card-title">Upload an .eml or .txt file</div>
+                    <div class="card-sub">Drag and drop, or choose a file to analyze.</div>
+                    <div class="dropzone" id="dropzone">
+                        <i data-icon="upload"></i>
+                        <div>Drag &amp; drop an .eml or .txt file here</div>
+                        <div style="font-size:11px;margin:6px 0;">or</div>
+                        <button class="btn btn-outline btn-sm" id="chooseFileBtn">Choose File</button>
+                        <input type="file" id="fileInput" accept=".eml,.txt" style="display:none;">
+                        <div id="chosenFileName" style="margin-top:10px;font-size:12px;color:var(--sidebar-text);font-weight:600;"></div>
+                    </div>
+                    <button class="btn btn-primary" id="analyzeCustomBtn" style="width:100%;margin-top:14px;" disabled>Analyze</button>
+                </div>
+                <div class="card">
+                    <div class="card-title">Recent custom analyses</div>
+                    <div class="card-sub">Messages you've analyzed outside the mailbox.</div>
+                    <div id="customAnalysesList"></div>
+                </div>
+            </div>
         </section>
-      </section>
 
-      <!-- ---------------- SETTINGS ---------------- -->
-      <section class="view" data-view-id="settings">
-        <h2 class="view-title">Settings</h2>
-
-        <div class="panel">
-          <h3>Appearance</h3>
-          <p class="muted-note">Choose Light, Dark, or match your system. All themes are audited for text/badge contrast.</p>
-          <div class="theme-grid">
-            <div class="theme-menu-group">
-              <div class="theme-menu-label">System</div>
-              <button class="theme-option" data-theme="system">Match System</button>
+        <!-- ================= USER VIEW ================= -->
+        <section class="view" id="view-user">
+            <header class="header-top">
+                <div class="header-titles"><h1>User</h1><p>Profile, connected accounts &amp; trust settings</p></div>
+            </header>
+            <div class="user-content-grid">
+                <div class="card" style="display:flex;flex-direction:column;">
+                    <div class="card-title">Profile</div>
+                    <div style="display:flex;align-items:center;gap:14px;margin:10px 0 16px;">
+                        <img id="userViewAvatar" src="" style="width:56px;height:56px;border-radius:50%;display:none;">
+                        <div><div style="font-weight:700;color:var(--surface-text);" id="userViewName"></div><div style="font-size:12px;color:var(--surface-muted);" id="userViewEmail"></div></div>
+                    </div>
+                    <div class="card-title" style="margin-top:10px;">Connected accounts</div>
+                    <div id="connectedAccounts" style="margin-top:8px;flex-grow:1;"></div>
+                </div>
+                <div class="card" style="display:flex;flex-direction:column;">
+                    <div class="card-title">Trusted senders</div>
+                    <div class="card-sub">Senders you've explicitly marked safe. This never erases the original automated analysis.</div>
+                    <div style="overflow-y:auto; flex-grow:1; display:flex; flex-direction:column;">
+                        <table class="trust-table" id="trustedSendersTable" style="margin-bottom:auto;">
+                            <thead><tr><th>Sender</th><th>Date trusted</th><th>Account</th><th></th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                        <div class="empty-state" id="trustedEmptyState" style="display:none; flex-grow:1; min-height:120px;"><i data-icon="shield"></i><span>No trusted senders yet</span></div>
+                    </div>
+                </div>
+                <div class="card" style="display:flex;flex-direction:column;">
+                    <div class="card-title">Session information</div>
+                    <div style="flex-grow:1; display:flex; flex-direction:column; justify-content:center; padding-bottom:10px;">
+                        <div class="kv-row"><span class="k">Session started</span><span class="v" id="sessionStartedVal"></span></div>
+                        <div class="kv-row"><span class="k">Device</span><span class="v" id="sessionDeviceVal"></span></div>
+                        <div class="kv-row"><span class="k">IP address</span><span class="v" id="sessionIpVal"></span></div>
+                        <div class="kv-row"><span class="k">Local retention</span><span class="v" id="sessionRetentionVal"></span></div>
+                    </div>
+                </div>
+                <div class="card" style="display:flex;flex-direction:column;">
+                    <div class="card-title">Recent activity</div>
+                    <div class="card-sub">What ValorProtects has been doing.</div>
+                    <div id="userRecentActivity" style="flex-grow:1; overflow-y:auto;"></div>
+                </div>
             </div>
-            <div class="theme-menu-group">
-              <div class="theme-menu-label">Light</div>
-              <button class="theme-option" data-theme="professional-light">Professional Light</button>
-              <button class="theme-option" data-theme="azure-light">Azure Light</button>
-              <button class="theme-option" data-theme="neutral-light">Neutral Light</button>
-            </div>
-            <div class="theme-menu-group">
-              <div class="theme-menu-label">Dark</div>
-              <button class="theme-option" data-theme="soc-dark">SOC Dark</button>
-              <button class="theme-option" data-theme="midnight-blue">Midnight Blue</button>
-              <button class="theme-option" data-theme="graphite-dark">Graphite Dark</button>
-            </div>
-          </div>
-        </div>
+        </section>
 
-        <div class="panel">
-          <h3>Accounts</h3>
-          <div id="settings-account-area"></div>
-        </div>
+        <!-- ================= SETTINGS VIEW ================= -->
+        <section class="view" id="view-settings">
+            <header class="header-top">
+                <div class="header-titles"><h1>Settings</h1><p>Application preferences</p></div>
+            </header>
+            <div class="page-grid" style="flex-grow:1; min-height:0; overflow-y:auto;">
+                <div class="card">
+                    <div class="card-title">Account</div>
+                    <div class="settings-section">
+                        <div class="settings-row"><div><div class="label">Display name</div><div class="desc" id="settingsDisplayName"></div></div><button class="btn btn-ghost btn-sm">Edit</button></div>
+                    </div>
+                    <div class="card-title">Mailbox</div>
+                    <div class="settings-section">
+                        <div class="settings-row"><div><div class="label">Auto-refresh mailbox</div><div class="desc">Check for new mail automatically</div></div><div class="switch on" data-setting="autorefresh"><div class="knob"></div></div></div>
+                        <div class="settings-row"><div><div class="label">Refresh interval</div><div class="desc">How often to poll for new mail</div></div>
+                            <select style="border-radius:8px;border:1px solid var(--surface-border);padding:6px 10px;font-size:12px;"><option>5 minutes</option><option>15 minutes</option><option>1 hour</option></select>
+                        </div>
+                    </div>
+                    <div class="card-title">Notifications</div>
+                    <div class="settings-section">
+                        <div class="settings-row"><div><div class="label">Email notifications digest</div><div class="desc">Daily summary of scan results</div></div><div class="switch on" data-setting="digest"><div class="knob"></div></div></div>
+                    </div>
+                    <div class="card-title">Trusted senders</div>
+                    <div class="settings-section" style="border-bottom:none;">
+                        <div class="settings-row"><div><div class="label">Manage trusted senders</div><div class="desc">Review or remove senders you've marked safe</div></div><button class="btn btn-ghost btn-sm" id="goToTrustedBtn">Open &rarr;</button></div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-title">Analysis</div>
+                    <div class="settings-section">
+                        <div class="settings-row"><div><div class="label">SpamAssassin support signal</div><div class="desc">Optional, non-primary spam signal</div></div><div class="switch on" data-setting="spamassassin"><div class="knob"></div></div></div>
+                        <div class="settings-row"><div><div class="label">Deep attachment scan</div><div class="desc">Force deep scan on suspicious attachments</div></div><div class="switch on" data-setting="deepscan"><div class="knob"></div></div></div>
+                    </div>
+                    <div class="card-title">Privacy</div>
+                    <div class="settings-section">
+                        <div class="settings-row"><div><div class="label">Local retention</div><div class="desc">How long scan results stay in local storage</div></div>
+                            <select style="border-radius:8px;border:1px solid var(--surface-border);padding:6px 10px;font-size:12px;"><option>30 days</option><option selected>90 days</option><option>1 year</option></select>
+                        </div>
+                    </div>
+                    <div class="card-title">Theme</div>
+                    <div class="settings-section">
+                        <div class="settings-row">
+                            <div><div class="label">Appearance</div><div class="desc" id="currentThemeLabel">Current: Default</div></div>
+                            <button class="btn btn-outline btn-sm" id="changeThemeBtn">Change Theme</button>
+                        </div>
+                    </div>
+                    <div class="card-title">Updates</div>
+                    <div class="settings-section" id="updatesSection" style="border-bottom:none;"></div>
+                </div>
+            </div>
+        </section>
 
-        <div class="panel">
-          <h3>About</h3>
-          <p><strong>ValorProtects</strong> - AI-powered email threat detection, geolocation and forensic
-             intelligence platform. Version 1.0.0 (hackathon build).</p>
-          <p class="muted-note">Updates, Terms &amp; Conditions, organization/personal mail-action policies,
-             and YARA attachment scanning are documented as planned in PROJECT_CONTEXT.md but are not
-             implemented in this build - see the project docs for the current status of each.</p>
-        </div>
-      </section>
 
     </main>
 
-    <!-- ============ DETAIL PANEL (slide-over) ============ -->
-    <aside class="detail-panel" id="detail-panel" aria-hidden="true" aria-label="Email details">
-      <div class="detail-panel-header">
-        <h2 id="detail-subject">Email details</h2>
-        <button class="btn btn-icon" id="close-detail-btn" aria-label="Close details">&times;</button>
-      </div>
-      <div class="detail-panel-body" id="detail-panel-body">
-        <!-- populated by app.js -->
-      </div>
-    </aside>
-    <div class="detail-overlay" id="detail-overlay" hidden></div>
+    <!-- ================= EMAIL ANALYSIS WORKSPACE (centered modal) ================= -->
+    <div class="drawer-overlay" id="drawerOverlay">
+        <div class="drawer" id="drawer">
+            <div class="drawer-header">
+                <div>
+                    <h2 id="drawerSubject">Subject line</h2>
+                    <p id="drawerFrom">sender@example.com</p>
+                </div>
+                <button class="drawer-close" id="drawerClose"><i data-icon="close"></i></button>
+            </div>
+            <div class="drawer-body" id="drawerBody"></div>
+            <div class="drawer-actions" id="drawerActions"></div>
+        </div>
+    </div>
 
-  </div>
+    <!-- ================= GENERIC MODAL ================= -->
+    <div class="modal-overlay" id="modalOverlay">
+        <div class="modal" id="modalBox"></div>
+    </div>
+
+    <div class="toast-wrap" id="toastWrap"></div>
+
 </div>
 
+<script src="/assets/icons.js"></script>
 <script src="/assets/app.js"></script>
 </body>
 </html>
