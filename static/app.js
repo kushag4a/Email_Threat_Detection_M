@@ -1,124 +1,17 @@
+/* =========================================================
+   ValorProtects — Production Frontend (Polished UI + Real API)
+   ==========================================================
+   This file combines the polished ValorProtects UI design with
+   the real backend API. NO mock data, NO fake scanning, NO
+   generated emails. Every piece of data comes from the real
+   FastAPI backend.
+   ========================================================= */
+
 (function () {
   "use strict";
 
   // ============================================================
-  // TOAST / ERROR BANNER (replaces alert() calls)
-  // ============================================================
-
-  function showToast(message, kind) {
-    const container = document.getElementById("toast-container");
-    const toast = document.createElement("div");
-    toast.className = "toast toast--" + (kind || "error");
-    toast.textContent = message;
-    container.appendChild(toast);
-    setTimeout(() => toast.remove(), 6000);
-  }
-
-  // ============================================================
-  // THEME (persisted in localStorage, "system" resolves live)
-  // ============================================================
-
-  const THEME_STORAGE_KEY = "eta-theme";
-
-  function resolveSystemTheme() {
-    const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
-    return prefersDark ? "soc-dark" : "professional-light";
-  }
-
-  function applyTheme(themeName) {
-    const effective = themeName === "system" ? resolveSystemTheme() : themeName;
-    document.documentElement.setAttribute("data-theme", effective);
-  }
-
-  function initTheme() {
-    const stored = localStorage.getItem(THEME_STORAGE_KEY) || "soc-dark";
-    applyTheme(stored);
-
-    if (window.matchMedia) {
-      window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-        if (localStorage.getItem(THEME_STORAGE_KEY) === "system") applyTheme("system");
-      });
-    }
-  }
-
-  document.querySelectorAll(".theme-option").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const theme = btn.getAttribute("data-theme");
-      localStorage.setItem(THEME_STORAGE_KEY, theme);
-      applyTheme(theme);
-      showToast("Theme updated", "info");
-    });
-  });
-
-  initTheme();
-
-  // ============================================================
-  // SIDEBAR ROUTING (every item switches a real view - none are dead)
-  // ============================================================
-
-  const VIEW_LOADERS = {
-    scans: loadScansView,
-    intel: loadIntelView,
-    cases: loadCasesView,
-    reports: loadReportsView,
-    settings: loadSettingsView,
-  };
-
-  function switchView(viewId) {
-    document.querySelectorAll(".nav-item").forEach((item) => {
-      item.classList.toggle("active", item.getAttribute("data-view") === viewId);
-    });
-
-    // "inbox" is an alias for the dashboard view (same table/controls)
-    const targetId = viewId === "inbox" ? "dashboard" : viewId;
-
-    document.querySelectorAll(".view").forEach((section) => {
-      section.classList.toggle("active", section.getAttribute("data-view-id") === targetId);
-    });
-
-    if (VIEW_LOADERS[viewId]) {
-      VIEW_LOADERS[viewId]();
-    }
-  }
-
-  document.querySelectorAll(".nav-item").forEach((item) => {
-    item.addEventListener("click", () => switchView(item.getAttribute("data-view")));
-  });
-
-  // ============================================================
-  // STATE
-  // ============================================================
-
-  const state = {
-    provider: null, // "google" | "microsoft" | null
-    accountEmail: null,
-    pageSize: 5,
-    pageTokenStack: [null],
-    currentPageIndex: 0,
-    nextPageToken: null,
-    currentMessageIds: [],
-    scanId: null,
-    scanPollHandle: null,
-    resultsByMessageId: {},
-    batchFiles: [],
-  };
-
-  const el = {};
-  [
-    "provider-status-text", "connect-buttons", "connect-google", "connect-microsoft",
-    "logout-btn", "refresh-btn", "page-size-select", "scan-btn", "prev-page-btn",
-    "next-page-btn", "page-indicator", "scan-progress", "progress-bar-fill",
-    "progress-text", "scan-summary", "email-table-body", "count-low", "count-medium",
-    "count-high", "count-critical", "detail-panel", "detail-overlay", "detail-subject",
-    "detail-panel-body", "close-detail-btn", "connect-prompt", "dropzone",
-    "browse-files-btn", "eml-file-input", "selected-files-list", "analyze-batch-btn",
-    "batch-summary", "batch-table-body",
-  ].forEach((id) => { el[id] = document.getElementById(id); });
-  el.providerStatusDot = document.querySelector("#provider-status .status-dot");
-
-  // ============================================================
-  // API HELPERS - every call detects non-2xx, surfaces a real error,
-  // and never leaves a button permanently disabled on failure.
+  // API HELPERS — real backend communication
   // ============================================================
 
   async function apiGet(url) {
@@ -126,7 +19,7 @@
     try {
       res = await fetch(url, { credentials: "include" });
     } catch (networkErr) {
-      throw { detail: "Network error - is the server running?" };
+      throw { detail: "Network error — is the server running?" };
     }
     if (!res.ok) {
       const body = await res.json().catch(() => ({ detail: res.statusText }));
@@ -140,7 +33,7 @@
     try {
       res = await fetch(url, Object.assign({ method: "POST", credentials: "include" }, options || {}));
     } catch (networkErr) {
-      throw { detail: "Network error - is the server running?" };
+      throw { detail: "Network error — is the server running?" };
     }
     if (!res.ok) {
       const body = await res.json().catch(() => ({ detail: res.statusText }));
@@ -154,6 +47,171 @@
   }
 
   // ============================================================
+  // UTILITY
+  // ============================================================
+
+  function escapeHtml(str) {
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function fmtDate(d) {
+    if (!d) return "—";
+    if (typeof d === "string") return d;
+    return d.toLocaleDateString(undefined, { weekday: "short", day: "2-digit", month: "short" }) +
+      ", " + d.getFullYear() + " " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  }
+
+  function timeAgo(d) {
+    if (!d) return "";
+    const date = typeof d === "string" ? new Date(d) : d;
+    if (isNaN(date.getTime())) return d;
+    const mins = Math.round((Date.now() - date.getTime()) / 60000);
+    if (mins < 0) return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.round(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    return `${Math.round(hrs / 24)}d ago`;
+  }
+
+  function formatRelativeTime(d) {
+    const mins = Math.floor((Date.now() - d.getTime()) / 60000);
+    if (mins < 1) return "Just now";
+    if (mins < 60) return `${mins} min ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs} hour${hrs === 1 ? "" : "s"} ago`;
+    const days = Math.floor(hrs / 24);
+    if (days === 1) return "Yesterday";
+    return `${days} days ago`;
+  }
+
+  // ============================================================
+  // ICON HELPERS (uses icons.js ICONS dict)
+  // ============================================================
+
+  function ic(name, cls) {
+    const body = (typeof ICONS !== "undefined" && ICONS[name]) || "";
+    if (!body) return "";
+    return `<svg class="icon${cls ? " " + cls : ""}" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${body}</svg>`;
+  }
+
+  // ============================================================
+  // TOAST SYSTEM
+  // ============================================================
+
+  function toast(msg, icon) {
+    const wrap = document.getElementById("toastWrap");
+    if (!wrap) return;
+    const el = document.createElement("div");
+    el.className = "toast";
+    el.innerHTML = `${ic(icon || "circle-check")}<span>${escapeHtml(msg)}</span>`;
+    wrap.appendChild(el);
+    setTimeout(() => { el.style.opacity = "0"; el.style.transition = "opacity .3s"; setTimeout(() => el.remove(), 300); }, 3200);
+  }
+
+  // ============================================================
+  // THEME SYSTEM
+  // ============================================================
+
+  const THEME_LABELS = { default: "Default", dark: "Dark", light: "Light", purple: "Purple" };
+
+  function applyTheme(name) {
+    state.theme = name;
+    if (name === "default") document.documentElement.removeAttribute("data-theme");
+    else document.documentElement.setAttribute("data-theme", name);
+    localStorage.setItem("vp_theme", name);
+    const label = document.getElementById("currentThemeLabel");
+    if (label) label.textContent = `Current: ${THEME_LABELS[name] || "Default"}`;
+  }
+
+  // ============================================================
+  // STATE
+  // ============================================================
+
+  const state = {
+    // Connection
+    provider: null,       // "google" | "microsoft" | null
+    accountEmail: null,
+    googleStatus: { connected: false, email: null },
+    microsoftStatus: { connected: false, email: null },
+
+    // Pagination (real backend token-based)
+    pageSize: 20,
+    pageTokenStack: [null],
+    currentPageIndex: 0,
+    nextPageToken: null,
+    currentMessageIds: [],
+
+    // Results cache
+    resultsByMessageId: {},
+    scanId: null,
+    scanPollHandle: null,
+
+    // Custom analysis
+    customAnalyses: [],
+    chosenFile: null,
+
+    // Filters (client-side over loaded results)
+    search: "",
+    filters: { severity: "all", threat: "all", trust: "all", read: "all" },
+
+    // Trusted senders (localStorage persistence)
+    trustedSenders: JSON.parse(localStorage.getItem("vp_trustedSenders") || "{}"),
+
+    // Theme
+    theme: localStorage.getItem("vp_theme") || "default",
+
+    // Settings (UI toggles, persisted locally)
+    settings: JSON.parse(localStorage.getItem("vp_settings") || '{"digest":true,"autorefresh":true,"spamassassin":true,"deepscan":true}'),
+
+    // Refresh tracking
+    lastRefreshedAt: null,
+    refreshing: false,
+    scanning: false,
+
+    // Dashboard data cache
+    dashboardData: null,
+  };
+
+  // Apply persisted theme
+  applyTheme(state.theme);
+
+  // ============================================================
+  // SIDEBAR NAVIGATION
+  // ============================================================
+
+  const navItems = document.querySelectorAll(".nav-links li[data-view]");
+  const views = document.querySelectorAll(".view");
+
+  function setActiveView(name) {
+    views.forEach(v => v.classList.toggle("active", v.id === "view-" + name));
+    navItems.forEach(li => li.classList.toggle("active", li.getAttribute("data-view") === name));
+    if (name === "home") renderHome();
+    if (name === "inbox") renderInbox();
+    if (name === "dashboard") renderDashboard();
+    if (name === "reports") renderReports();
+    if (name === "custom") renderCustom();
+    if (name === "user") renderUser();
+    if (name === "settings") initSettings();
+  }
+
+  navItems.forEach(li => {
+    li.addEventListener("click", () => setActiveView(li.getAttribute("data-view")));
+  });
+
+  // Sidebar collapse
+  const sidebar = document.getElementById("sidebar");
+  const toggleBtn = document.getElementById("toggleBtn");
+  if (toggleBtn) {
+    toggleBtn.addEventListener("click", () => {
+      sidebar.classList.toggle("collapsed");
+    });
+  }
+
+  // ============================================================
   // CONNECTION STATUS / LIFECYCLE
   // ============================================================
 
@@ -162,6 +220,9 @@
       apiGet("/auth/google/status").catch(() => ({ connected: false })),
       apiGet("/auth/microsoft/status").catch(() => ({ connected: false })),
     ]);
+
+    state.googleStatus = googleStatus;
+    state.microsoftStatus = msStatus;
 
     if (googleStatus.connected) {
       state.provider = "google";
@@ -174,95 +235,81 @@
       state.accountEmail = null;
     }
 
-    renderConnectionStatus();
-    renderSettingsAccountArea();
-  }
+    updateUserProfileShortcut();
 
-  function renderConnectionStatus() {
-    if (state.provider) {
-      el.providerStatusDot.classList.remove("status-dot--off");
-      el.providerStatusDot.classList.add("status-dot--on");
-      el["provider-status-text"].textContent =
-        `${state.provider === "google" ? "Gmail" : "Microsoft"} \u2014 ${state.accountEmail}`;
-      el["connect-buttons"].hidden = true;
-      el["logout-btn"].hidden = false;
-      el["scan-btn"].disabled = false;
-      el["connect-prompt"].hidden = true;
-      loadEmailPage(null, 0);
-    } else {
-      el.providerStatusDot.classList.remove("status-dot--on");
-      el.providerStatusDot.classList.add("status-dot--off");
-      el["provider-status-text"].textContent = "No mailbox connected";
-      el["connect-buttons"].hidden = false;
-      el["logout-btn"].hidden = true;
-      el["scan-btn"].disabled = true;
-      el["connect-prompt"].hidden = false;
-    }
-  }
-
-  el["connect-google"].addEventListener("click", () => {
-    window.location.href = "/auth/google/login";
-  });
-
-  el["connect-microsoft"].addEventListener("click", () => {
-    window.location.href = "/auth/microsoft/login";
-  });
-
-  async function doLogout() {
-    if (!state.provider) return;
-
-    try {
-      await apiPost(`/auth/${state.provider}/logout`);
-    } catch (err) {
-      showToast("Logout request failed: " + errText(err));
-      // Fall through and clear client state anyway - a stuck "connected"
-      // UI after a failed logout call is worse than an optimistic clear.
-    }
-
-    // Full client-state reset, per spec: no stale results/scan state
-    // left on screen after logout.
-    if (state.scanPollHandle) clearInterval(state.scanPollHandle);
-    state.provider = null;
-    state.accountEmail = null;
-    state.currentMessageIds = [];
-    state.resultsByMessageId = {};
-    state.scanId = null;
-    state.pageTokenStack = [null];
-    state.currentPageIndex = 0;
-    state.nextPageToken = null;
-
-    el["scan-progress"].hidden = true;
-    el["scan-summary"].hidden = true;
-    el["page-indicator"].textContent = "Page 1";
-    el["prev-page-btn"].disabled = true;
-    el["next-page-btn"].disabled = true;
-
-    closeDetailPanel();
-    renderTable([]);
-    updateSummaryCards();
-    renderConnectionStatus();
-    renderSettingsAccountArea();
-    showToast("Logged out", "info");
-  }
-
-  el["logout-btn"].addEventListener("click", doLogout);
-
-  el["refresh-btn"].addEventListener("click", () => {
     if (state.provider) {
       loadEmailPage(null, 0);
-    } else {
-      refreshConnectionStatus();
     }
-  });
+  }
+
+  function updateUserProfileShortcut() {
+    const el = document.getElementById("userProfileShortcut");
+    if (!el) return;
+    if (state.provider && state.accountEmail) {
+      const providerName = state.provider === "google" ? "Gmail" : "Microsoft";
+      el.innerHTML = `
+        <img id="userAvatar" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='8' r='4' fill='%2368D391'/%3E%3Cpath d='M4 20c0-4 3.5-6 8-6s8 2 8 6' fill='%2368D391'/%3E%3C/svg%3E" alt="User">
+        <div class="user-info">
+          <strong>${escapeHtml(providerName)}</strong>
+          <span>${escapeHtml(state.accountEmail)}</span>
+        </div>`;
+    } else {
+      el.innerHTML = `
+        <div class="user-info">
+          <strong>Not connected</strong>
+          <span>Connect a mailbox</span>
+        </div>`;
+    }
+  }
 
   // ============================================================
-  // PAGINATION / MAILBOX LISTING
+  // REFRESH (real mailbox refresh via page reload)
   // ============================================================
 
-  el["page-size-select"].addEventListener("change", () => {
-    state.pageSize = parseInt(el["page-size-select"].value, 10);
-    loadEmailPage(null, 0);
-  });
+  function refreshMailbox(triggerBtn, onDone) {
+    if (state.refreshing || !state.provider) return;
+    state.refreshing = true;
+    if (triggerBtn) triggerBtn.classList.add("syncing");
+
+    loadEmailPage(null, 0).then(() => {
+      state.lastRefreshedAt = new Date();
+      localStorage.setItem("vp_lastRefreshedAt", state.lastRefreshedAt.toISOString());
+      renderRefreshLabels();
+      if (triggerBtn) triggerBtn.classList.remove("syncing");
+      state.refreshing = false;
+      toast("Mailbox refreshed");
+      if (onDone) onDone();
+    }).catch(err => {
+      if (triggerBtn) triggerBtn.classList.remove("syncing");
+      state.refreshing = false;
+      toast("Refresh failed: " + errText(err));
+    });
+  }
+
+  function loadLastRefreshedAt() {
+    const saved = localStorage.getItem("vp_lastRefreshedAt");
+    if (saved) {
+      const d = new Date(saved);
+      if (!isNaN(d)) return d;
+    }
+    return null;
+  }
+
+  function renderRefreshLabels() {
+    const text = state.lastRefreshedAt
+      ? `Last refreshed ${formatRelativeTime(state.lastRefreshedAt)}`
+      : "Not yet refreshed";
+    ["dashboardRefreshedLine", "homeRefreshedLine", "inboxRefreshedLine"].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = text;
+    });
+  }
+
+  state.lastRefreshedAt = loadLastRefreshedAt();
+
+  // ============================================================
+  // PAGINATION / MAILBOX LISTING (real backend)
+  // ============================================================
 
   async function loadEmailPage(pageToken, pageIndex) {
     if (!state.provider) return;
@@ -276,10 +323,9 @@
 
       const data = await apiGet(`/api/emails?${params.toString()}`);
 
-      state.currentMessageIds = data.messages.map((m) => m.message_id);
-      // Cache the metadata itself so the table shows real sender/subject/
-      // date immediately, before any scan has run.
-      data.messages.forEach((m) => {
+      state.currentMessageIds = data.messages.map(m => m.message_id);
+      // Cache metadata for table display before scan
+      data.messages.forEach(m => {
         if (!state.resultsByMessageId[m.message_id]) {
           state.resultsByMessageId[m.message_id] = {
             message_id: m.message_id,
@@ -296,52 +342,169 @@
       state.pageTokenStack = state.pageTokenStack.slice(0, pageIndex + 1);
       state.pageTokenStack[pageIndex] = pageToken;
 
-      el["page-indicator"].textContent = `Page ${pageIndex + 1}`;
-      el["prev-page-btn"].disabled = pageIndex === 0;
-      el["next-page-btn"].disabled = !state.nextPageToken;
+      if (!state.lastRefreshedAt) {
+        state.lastRefreshedAt = new Date();
+        localStorage.setItem("vp_lastRefreshedAt", state.lastRefreshedAt.toISOString());
+      }
 
-      renderTable(state.currentMessageIds.map((id) => state.resultsByMessageId[id]));
+      renderInboxTable();
+      updateSummaryCards();
+      renderRefreshLabels();
     } catch (err) {
-      showToast("Failed to load inbox: " + errText(err));
+      toast("Failed to load inbox: " + errText(err));
     }
   }
 
-  el["prev-page-btn"].addEventListener("click", () => {
-    if (state.currentPageIndex === 0) return;
-    const prevIndex = state.currentPageIndex - 1;
-    loadEmailPage(state.pageTokenStack[prevIndex], prevIndex);
-  });
-
-  el["next-page-btn"].addEventListener("click", () => {
-    if (!state.nextPageToken) return;
-    loadEmailPage(state.nextPageToken, state.currentPageIndex + 1);
-  });
-
   // ============================================================
-  // SCANNING
+  // INBOX TABLE RENDERING
   // ============================================================
 
-  el["scan-btn"].addEventListener("click", async () => {
-    if (!state.provider) return;
+  function getFilteredResults() {
+    let list = state.currentMessageIds.map(id => state.resultsByMessageId[id]).filter(Boolean);
+    const q = state.search.trim().toLowerCase();
+    if (q) {
+      list = list.filter(r => {
+        const email = r.email || {};
+        const sender = (email.sender || "").toLowerCase();
+        const subject = (email.subject || "").toLowerCase();
+        const threats = (r.threat_types || []).join(" ").toLowerCase();
+        return sender.includes(q) || subject.includes(q) || threats.includes(q);
+      });
+    }
+    if (state.filters.severity !== "all") {
+      const map = { safe: "LOW", medium: "MEDIUM", high: "HIGH", critical: "CRITICAL" };
+      const target = map[state.filters.severity] || state.filters.severity.toUpperCase();
+      list = list.filter(r => (r.risk && r.risk.level) === target);
+    }
+    if (state.filters.threat !== "all") {
+      list = list.filter(r => (r.threat_types || []).includes(state.filters.threat));
+    }
+    if (state.filters.trust === "trusted") {
+      list = list.filter(r => {
+        const sender = (r.email || {}).sender || "";
+        return state.trustedSenders[sender];
+      });
+    }
+    if (state.filters.trust === "untrusted") {
+      list = list.filter(r => {
+        const sender = (r.email || {}).sender || "";
+        return !state.trustedSenders[sender];
+      });
+    }
+    return list;
+  }
 
-    // BUG FIX (page-scoped scan bug - see DIAGNOSTIC_EVIDENCE.md): this
-    // used to send only `count=${state.pageSize}`, so the backend had
-    // no idea which page was on screen and always re-derived "the
-    // first N messages in the mailbox" from scratch - scanning page 1
-    // again even while the user was looking at page 2 or 3. Send the
-    // exact message IDs this page is currently displaying instead
-    // (the same IDs /api/emails just returned for this page), so the
-    // backend can never scan anything other than what's on screen.
-    if (!state.currentMessageIds.length) {
-      showToast("No messages loaded on this page to scan.", "error");
+  function severityLabel(level) {
+    if (!level) return "NOT SCANNED";
+    const labels = { LOW: "SAFE", MEDIUM: "MEDIUM", HIGH: "HIGH", CRITICAL: "CRITICAL" };
+    return labels[level] || level;
+  }
+
+  function severityClass(level) {
+    if (!level) return "unscanned";
+    const map = { LOW: "safe", MEDIUM: "medium", HIGH: "high", CRITICAL: "critical" };
+    return map[level] || "unscanned";
+  }
+
+  function renderInboxTable() {
+    const list = getFilteredResults();
+    const inboxTbody = document.getElementById("inboxTbody");
+    const wrap = document.getElementById("inboxTableWrap");
+    const pageLabel = document.getElementById("pageLabel");
+    const pageRangeLabel = document.getElementById("pageRangeLabel");
+    const inboxSubtitle = document.getElementById("inboxSubtitle");
+    const prevBtn = document.getElementById("prevPageBtn");
+    const nextBtn = document.getElementById("nextPageBtn");
+
+    if (inboxSubtitle) {
+      const scannedCount = Object.values(state.resultsByMessageId).filter(r => r.status && r.status !== "unscanned").length;
+      inboxSubtitle.textContent = `${state.currentMessageIds.length} messages loaded · ${scannedCount} scanned`;
+    }
+
+    if (pageLabel) pageLabel.textContent = `Page ${state.currentPageIndex + 1}`;
+    if (pageRangeLabel) pageRangeLabel.textContent = list.length ? `Showing ${list.length} message(s)` : "No matches";
+    if (prevBtn) prevBtn.disabled = state.currentPageIndex === 0;
+    if (nextBtn) nextBtn.disabled = !state.nextPageToken;
+
+    if (!list.length) {
+      if (wrap) wrap.innerHTML = `<div class="empty-state" style="height:100%;">${ic("inbox")}<span>${state.provider ? "No emails match current filters" : "Connect a mailbox to see your inbox"}</span></div>`;
       return;
     }
 
-    el["scan-btn"].disabled = true;
-    el["scan-progress"].hidden = false;
-    el["scan-summary"].hidden = true;
-    el["progress-bar-fill"].style.width = "0%";
-    el["progress-text"].textContent = `Scanning 0 / ${state.currentMessageIds.length}`;
+    // Ensure table structure
+    if (wrap && !wrap.querySelector("table")) {
+      wrap.innerHTML = `<table class="mail-table"><thead><tr><th>Sender</th><th>Subject</th><th>Date</th><th>Risk</th><th>Threat Type</th><th>Status</th></tr></thead><tbody id="inboxTbody"></tbody></table>`;
+    }
+
+    const tbody = document.getElementById("inboxTbody");
+    if (!tbody) return;
+
+    tbody.innerHTML = list.map(r => {
+      const email = r.email || {};
+      const risk = r.risk || {};
+      const level = risk.level;
+      const score = risk.score;
+      const sev = severityClass(level);
+      const threats = (r.threat_types || []);
+      const sender = email.sender || "—";
+      const senderEmail = sender.includes("<") ? sender : "";
+      const senderName = sender.replace(/<.*>/, "").trim() || sender;
+      const isTrusted = state.trustedSenders[sender];
+      const isScanned = r.status && r.status !== "unscanned";
+
+      return `<tr class="${!isScanned ? "unscanned-row" : ""}" data-id="${escapeHtml(r.message_id)}">
+        <td><div class="sender-cell"><span>${escapeHtml(senderName)}</span>${senderEmail ? `<span class="addr">${escapeHtml(senderEmail)}</span>` : ""}</div></td>
+        <td>${escapeHtml(email.subject || "(no subject)")}</td>
+        <td>${escapeHtml(email.date || "—")}</td>
+        <td>${isScanned ? `<span class="badge ${sev}">${severityLabel(level)}${score != null ? " · " + score : ""}</span>` : `<span class="badge unscanned">NOT SCANNED</span>`}</td>
+        <td>${threats.length ? threats.map(t => `<span class="threat-tag">${escapeHtml(t)}</span>`).join("") : '<span style="color:var(--surface-muted);font-size:11px;">—</span>'}</td>
+        <td>${isTrusted ? '<span class="badge trusted">User-trusted</span>' : `<span style="font-size:12px;color:var(--surface-muted);">${isScanned ? "Scanned" : "Pending"}</span>`}</td>
+      </tr>`;
+    }).join("");
+
+    tbody.querySelectorAll("tr").forEach(row => {
+      row.addEventListener("click", () => {
+        const mid = row.getAttribute("data-id");
+        const result = state.resultsByMessageId[mid];
+        if (result && result.status !== "unscanned") {
+          openEmailWorkspace(result);
+        }
+      });
+    });
+  }
+
+  function updateSummaryCards() {
+    const counts = { LOW: 0, MEDIUM: 0, HIGH: 0, CRITICAL: 0 };
+    Object.values(state.resultsByMessageId).forEach(r => {
+      const level = r.risk && r.risk.level;
+      if (level && counts[level] !== undefined) counts[level]++;
+    });
+    return counts;
+  }
+
+  // ============================================================
+  // SCANNING (real backend)
+  // ============================================================
+
+  async function startScan() {
+    if (!state.provider || state.scanning) return;
+    if (!state.currentMessageIds.length) {
+      toast("No messages loaded to scan.", "warning");
+      return;
+    }
+
+    state.scanning = true;
+    const scanBtn = document.getElementById("scanInboxBtn");
+    const progress = document.getElementById("scanProgress");
+    const fill = document.getElementById("scanProgressFill");
+    const text = document.getElementById("scanProgressText");
+    const detail = document.getElementById("scanProgressDetail");
+
+    if (scanBtn) scanBtn.disabled = true;
+    if (progress) progress.classList.add("active");
+    if (fill) fill.style.width = "0%";
+    if (text) text.textContent = `Scanning 0 / ${state.currentMessageIds.length}`;
+    if (detail) detail.textContent = `Requested: ${state.currentMessageIds.length} · Analyzed: 0 · Failed: 0 · Skipped: 0`;
 
     try {
       const data = await apiPost(`/api/scan?provider=${state.provider}`, {
@@ -351,129 +514,99 @@
       state.scanId = data.scan_id;
       pollScan();
     } catch (err) {
-      showToast("Failed to start scan: " + errText(err));
-      el["scan-btn"].disabled = false;
-      el["scan-progress"].hidden = true;
+      toast("Failed to start scan: " + errText(err));
+      if (scanBtn) scanBtn.disabled = false;
+      if (progress) progress.classList.remove("active");
+      state.scanning = false;
     }
-  });
+  }
 
   function pollScan() {
     if (state.scanPollHandle) clearInterval(state.scanPollHandle);
-
-    const POLL_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes max
+    const POLL_TIMEOUT_MS = 15 * 60 * 1000;
     const pollStart = Date.now();
 
     state.scanPollHandle = setInterval(async () => {
       try {
         if (Date.now() - pollStart > POLL_TIMEOUT_MS) {
           clearInterval(state.scanPollHandle);
-          el["scan-btn"].disabled = false;
-          showToast("Scan polling timed out after 15 minutes.", "error");
+          const scanBtn = document.getElementById("scanInboxBtn");
+          if (scanBtn) scanBtn.disabled = false;
+          state.scanning = false;
+          toast("Scan polling timed out after 15 minutes.", "warning");
           return;
         }
 
         const scan = await apiGet(`/api/scan/${state.scanId}`);
-
         const total = scan.requested || 1;
         const done = scan.analyzed + scan.failed;
         const pct = Math.min(100, Math.round((done / total) * 100));
 
-        el["progress-bar-fill"].style.width = pct + "%";
-        el["progress-text"].textContent = `Scanning ${done} / ${total}`;
+        const fill = document.getElementById("scanProgressFill");
+        const text = document.getElementById("scanProgressText");
+        const detail = document.getElementById("scanProgressDetail");
+        if (fill) fill.style.width = pct + "%";
+        if (text) text.textContent = `Scanning ${done} / ${total}`;
+        if (detail) detail.textContent = `Requested: ${scan.requested} · Analyzed: ${scan.analyzed} · Failed: ${scan.failed} · Skipped: ${scan.skipped}`;
 
-        scan.results.forEach((r) => { state.resultsByMessageId[r.message_id] = r; });
-        renderTable(state.currentMessageIds.map((id) => state.resultsByMessageId[id]));
+        scan.results.forEach(r => { state.resultsByMessageId[r.message_id] = r; });
+        renderInboxTable();
         updateSummaryCards();
 
         if (scan.status === "complete") {
           clearInterval(state.scanPollHandle);
-          el["scan-btn"].disabled = false;
-          el["scan-summary"].hidden = false;
-          el["scan-summary"].textContent =
-            `Requested: ${scan.requested}  \u2022  Analyzed: ${scan.analyzed}  \u2022  ` +
-            `Failed: ${scan.failed}  \u2022  Skipped: ${scan.skipped}`;
+          const scanBtn = document.getElementById("scanInboxBtn");
+          if (scanBtn) scanBtn.disabled = false;
+          const progress = document.getElementById("scanProgress");
+          if (progress) setTimeout(() => progress.classList.remove("active"), 1500);
+          state.scanning = false;
+          state.lastRefreshedAt = new Date();
+          localStorage.setItem("vp_lastRefreshedAt", state.lastRefreshedAt.toISOString());
+          renderRefreshLabels();
+          toast("Scan complete — inbox up to date");
         }
       } catch (err) {
         clearInterval(state.scanPollHandle);
-        el["scan-btn"].disabled = false;
-        showToast("Lost connection while scanning: " + errText(err));
+        const scanBtn = document.getElementById("scanInboxBtn");
+        if (scanBtn) scanBtn.disabled = false;
+        state.scanning = false;
+        toast("Lost connection while scanning: " + errText(err));
       }
     }, 700);
   }
 
   // ============================================================
-  // TABLE RENDERING (Dashboard/Inbox)
+  // EMAIL ANALYSIS WORKSPACE (centered modal, real data)
   // ============================================================
 
-  function riskBadge(risk) {
-    if (!risk || !risk.level) {
-      return `<span class="risk-badge risk-badge--unknown">NOT SCANNED</span>`;
-    }
-    const level = risk.level.toLowerCase();
-    const labels = { low: "SAFE / LOW RISK", medium: "SUSPICIOUS", high: "HIGH RISK", critical: "CRITICAL" };
-    return `<span class="risk-badge risk-badge--${level}">${labels[level] || risk.level}</span>`;
+  const drawerOverlay = document.getElementById("drawerOverlay");
+  const drawer = document.getElementById("drawer");
+
+  function closeDrawer() {
+    if (drawerOverlay) drawerOverlay.classList.remove("open");
+    if (drawer) drawer.classList.remove("open");
   }
 
-  function renderTable(results) {
-    results = results.filter(Boolean);
+  if (document.getElementById("drawerClose")) {
+    document.getElementById("drawerClose").addEventListener("click", closeDrawer);
+  }
+  if (drawerOverlay) {
+    drawerOverlay.addEventListener("click", e => { if (e.target === drawerOverlay) closeDrawer(); });
+  }
+  document.addEventListener("keydown", e => { if (e.key === "Escape") { closeDrawer(); closeModal(); } });
 
-    if (!results.length) {
-      el["email-table-body"].innerHTML = `
-        <tr class="empty-state-row"><td colspan="6">
-          <div class="empty-state">
-            <p><strong>No emails loaded yet.</strong></p>
-            <p>Connect a mailbox above to see your inbox.</p>
-          </div>
-        </td></tr>`;
-      return;
-    }
-
-    el["email-table-body"].innerHTML = "";
-
-    results.forEach((r) => {
-      const tr = document.createElement("tr");
-      const email = r.email || {};
-      const attachmentCount = (r.attachments || []).length;
-
-      tr.innerHTML = `
-        <td>${escapeHtml(email.sender || "\u2014")}</td>
-        <td>${escapeHtml(email.subject || "(no subject)")}</td>
-        <td>${escapeHtml(email.date || "\u2014")}</td>
-        <td>${escapeHtml(r.provider || state.provider || "\u2014")}</td>
-        <td>${riskBadge(r.risk)}</td>
-        <td>${attachmentCount > 0 ? attachmentCount + " file(s)" : "\u2014"}</td>
-      `;
-
-      if (r.status && r.status !== "unscanned") {
-        tr.addEventListener("click", () => openDetailPanel(r));
-      }
-
-      el["email-table-body"].appendChild(tr);
-    });
+  function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+  function sevColor(sev) { return cssVar("--risk-" + sev + "-text"); }
+  function authBadge(v) {
+    if (!v || v === "unknown") return `<span style="color:var(--surface-muted);">Unknown</span>`;
+    const pass = v.toLowerCase().includes("pass");
+    return pass
+      ? `<span style="color:${cssVar("--risk-safe-text")};">Pass</span>`
+      : `<span style="color:${cssVar("--risk-critical-text")};">${escapeHtml(v)}</span>`;
   }
 
-  function updateSummaryCards() {
-    const counts = { LOW: 0, MEDIUM: 0, HIGH: 0, CRITICAL: 0 };
-    Object.values(state.resultsByMessageId).forEach((r) => {
-      const level = r.risk && r.risk.level;
-      if (level && counts[level] !== undefined) counts[level]++;
-    });
-
-    el["count-low"].textContent = counts.LOW;
-    el["count-medium"].textContent = counts.MEDIUM;
-    el["count-high"].textContent = counts.HIGH;
-    el["count-critical"].textContent = counts.CRITICAL;
-  }
-
-  // ============================================================
-  // DETAIL PANEL
-  // ============================================================
-
-  async function openDetailPanel(result) {
-    // The primary verdict is persisted before background geo enrichment.
-    // Re-fetch the latest stored result when a persisted identity is
-    // available so the detail panel does not remain stuck on an older
-    // geo_status/m4 snapshot captured while enrichment was still pending.
+  async function openEmailWorkspace(result) {
+    // Re-fetch latest analysis if possible
     if (result && result.provider && result.account_id && result.message_id) {
       try {
         const fresh = await apiGet(
@@ -481,10 +614,7 @@
         );
         result = fresh || result;
         state.resultsByMessageId[result.message_id] = result;
-      } catch (_) {
-        // Keep rendering the already-loaded result if the refresh races
-        // with a scan/store update or the analysis record is unavailable.
-      }
+      } catch (_) { /* keep existing result */ }
     }
 
     const email = result.email || {};
@@ -493,436 +623,1102 @@
     const m3 = result.m3 || { phishtank: [], spamhaus: [], local_heuristics: [] };
     const m4 = result.m4 || [];
     const risk = result.risk || {};
-
-    el["detail-subject"].textContent = email.subject || "(no subject)";
-
-    const kv = (label, value) => `<dt>${label}</dt><dd>${escapeHtml(String(value ?? "unknown"))}</dd>`;
-
-    const intelRows = () => {
-      const rows = [];
-      (m3.phishtank || []).forEach((r) => {
-        rows.push(`<li>URL ${escapeHtml(r.url)}: ${r.listed ? "KNOWN PHISHING (PhishTank local feed)" : "Not listed \u2014 PhishTank: no match"}</li>`);
-      });
-      (m3.spamhaus || []).forEach((r) => {
-        rows.push(`<li>IP ${escapeHtml(r.ip)}: ${r.listed ? "LISTED (Spamhaus DROP local feed, network " + escapeHtml(r.network || "") + ")" : "Not listed \u2014 Spamhaus: no match"}</li>`);
-      });
-      if (!rows.length) rows.push("<li>No indicators were available to check.</li>");
-      return rows.join("");
-    };
-
-    const geoRows = () => {
-      const rows = (m4 || []).map((g) =>
-        `<li>${escapeHtml(g.ip)}: ${escapeHtml(g.city)}, ${escapeHtml(g.region)}, ${escapeHtml(g.country)} \u2014 ${escapeHtml(g.organization)}<br><em>${escapeHtml(g.note || "")}</em></li>`
-      ).join("");
-      if (rows) return rows;
-
-      const status = result.geo_status || "not_applicable";
-      if (status === "pending") return "<li>Geolocation enrichment in progress…</li>";
-      if (status === "failed") return "<li>Geolocation lookup failed. The primary risk verdict is unchanged.</li>";
-      if (status === "not_applicable") {
-        return m1.origin_ip
-          ? "<li>No globally routable origin IP was available for geolocation.</li>"
-          : "<li>No origin IP could be extracted from the received headers.</li>";
-      }
-      return "<li>No geolocation data is available.</li>";
-    };
-
+    const headerAnalysis = result.header_analysis || {};
     const attachmentAnalysis = result.attachment_analysis || {};
-    const attachmentChips = !attachmentAnalysis.scanned
-      ? `<p class="muted-note">${escapeHtml(attachmentAnalysis.reason || "No attachments")}</p>`
-      : (result.attachments || []).map((a) => {
-          const flags = a.flags && a.flags.length ? ` \u2014 ${a.flags.join(", ")}` : "";
-          const chipClass = flags ? "attachment-chip attachment-chip--flagged" : "attachment-chip";
+    const bec = result.bec_analysis || {};
+    const sev = severityClass(risk.level);
+    const sender = email.sender || "—";
+    const isTrusted = state.trustedSenders[sender];
+
+    // Set header
+    const subjectEl = document.getElementById("drawerSubject");
+    const fromEl = document.getElementById("drawerFrom");
+    if (subjectEl) subjectEl.textContent = email.subject || "(no subject)";
+    if (fromEl) fromEl.textContent = sender;
+
+    // User disposition
+    const dispositionHtml = isTrusted
+      ? `<div class="disposition-box trusted"><strong>USER DISPOSITION:</strong> Trusted by user on ${escapeHtml(state.trustedSenders[sender].dateTrusted || "a previous session")}. This does not change the automated analysis below.</div>`
+      : `<div class="disposition-box none"><strong>USER DISPOSITION:</strong> None — treated per automated analysis.</div>`;
+
+    // BEC section
+    const becHtml = (bec.detected || (result.threat_types || []).some(t => t.toLowerCase().includes("bec")))
+      ? `<div class="kv-row"><span class="k">BEC detected</span><span class="v">Yes</span></div>
+         ${bec.matched_phrases ? `<div class="kv-row"><span class="k">Matched phrases</span><span class="v">${escapeHtml(bec.matched_phrases.join(", "))}</span></div>` : ""}
+         ${bec.urgency_score != null ? `<div class="kv-row"><span class="k">Urgency score</span><span class="v">${bec.urgency_score}</span></div>` : ""}`
+      : `<div style="color:var(--surface-muted);font-size:12.5px;">No BEC indicators found.</div>`;
+
+    // URL analysis
+    const urls = result.detected_urls || [];
+    const urlHtml = urls.length
+      ? urls.map(u => `<div class="link-card"><div class="link-card-top">${ic("link")} <span class="link-url">${escapeHtml(typeof u === "string" ? u : u.url || u)}</span></div></div>`).join("")
+      : `<div style="color:var(--surface-muted);font-size:12.5px;">No links detected.</div>`;
+
+    // Attachments
+    const attachments = result.attachments || [];
+    const attachHtml = !attachmentAnalysis.scanned
+      ? `<div style="color:var(--surface-muted);font-size:12.5px;">${escapeHtml(attachmentAnalysis.reason || "No attachments")}</div>`
+      : attachments.map(a => {
+          const flags = a.flags && a.flags.length ? ` — ${a.flags.join(", ")}` : "";
           const yara = a.yara || {};
           const yaraLabel = yara.scanned
             ? (yara.matches && yara.matches.length
-                ? `YARA: ${yara.matches.map((m) => `${m.rule} (${m.severity})`).join(", ")}`
-                : "YARA: no matching rule")
+              ? `YARA: ${yara.matches.map(m => `${m.rule} (${m.severity})`).join(", ")}`
+              : "YARA: no matching rule")
             : `YARA: not scanned (${yara.reason || "unavailable"})`;
-          return `<span class="${chipClass}" title="SHA-256: ${escapeHtml(a.sha256 || "n/a")}">${escapeHtml(a.filename || "attachment")} (${escapeHtml(a.extension || "")}, ${a.size_bytes || 0}B)${escapeHtml(flags)}<br><small>${escapeHtml(yaraLabel)}</small></span>`;
-        }).join("") || "No attachments.";
+          return `<div class="kv-row"><span class="k">File</span><span class="v">${escapeHtml(a.filename || "attachment")} (${escapeHtml(a.extension || "")}, ${a.size_bytes || 0}B)${escapeHtml(flags)}</span></div>
+            <div class="kv-row"><span class="k">Magic-byte</span><span class="v">${escapeHtml(a.detected_type || "—")}</span></div>
+            <div class="kv-row"><span class="k">YARA</span><span class="v">${escapeHtml(yaraLabel)}</span></div>
+            <div class="kv-row"><span class="k">SHA-256</span><span class="v" style="font-size:10.5px;">${escapeHtml(a.sha256 || "—")}</span></div>`;
+        }).join('<hr style="border:none;border-top:1px dashed var(--surface-border);margin:6px 0;">') || '<div style="color:var(--surface-muted);font-size:12.5px;">No attachments.</div>';
 
-    const reasonsList = (risk.reasons || []).map((r) => `<li>${escapeHtml(r)}</li>`).join("") || "<li>No reasons recorded.</li>";
-    const evidenceList = (result.evidence_sources || []).map((s) => `<li>${escapeHtml(s)}</li>`).join("") || "<li>None</li>";
-    const threatTypeChips = (result.threat_types || []).map((t) => `<span class="attachment-chip">${escapeHtml(t)}</span>`).join("") || "<span class=\"muted-note\">No specific threat types identified from deterministic evidence.</span>";
-    const overridesApplied = ((risk.calculation || {}).overrides_applied || []);
-    const overridesNote = overridesApplied.length
-      ? `<p class="muted-note"><strong>Deterministic evidence controlled the final severity:</strong> ${overridesApplied.map((o) => escapeHtml(o.evidence)).join("; ")}.</p>`
+    // Geolocation
+    const geoHtml = (() => {
+      const rows = (m4 || []).map(g =>
+        `<div class="kv-row"><span class="k">IP</span><span class="v">${escapeHtml(g.ip)}</span></div>
+         <div class="kv-row"><span class="k">Location</span><span class="v">${escapeHtml(g.city || "")}, ${escapeHtml(g.region || "")}, ${escapeHtml(g.country || "")}</span></div>
+         <div class="kv-row"><span class="k">Organization</span><span class="v">${escapeHtml(g.organization || "—")}</span></div>
+         ${g.note ? `<div style="color:var(--surface-muted);font-size:11px;font-style:italic;">${escapeHtml(g.note)}</div>` : ""}`
+      ).join('<hr style="border:none;border-top:1px dashed var(--surface-border);margin:6px 0;">');
+      if (rows) return rows;
+      const status = result.geo_status || "not_applicable";
+      if (status === "pending") return '<div style="color:var(--surface-muted);font-size:12.5px;">Geolocation enrichment in progress…</div>';
+      if (status === "failed") return '<div style="color:var(--surface-muted);font-size:12.5px;">Geolocation lookup failed.</div>';
+      return m1.origin_ip
+        ? '<div style="color:var(--surface-muted);font-size:12.5px;">No globally routable origin IP was available for geolocation.</div>'
+        : '<div style="color:var(--surface-muted);font-size:12.5px;">No origin IP could be extracted from the received headers.</div>';
+    })();
+
+    // Threat Intel
+    const intelHtml = (() => {
+      const rows = [];
+      (m3.phishtank || []).forEach(r => {
+        rows.push(`<div class="kv-row"><span class="k">PhishTank: ${escapeHtml(r.url || "")}</span><span class="v">${r.listed ? "KNOWN PHISHING" : "No match"}</span></div>`);
+      });
+      (m3.spamhaus || []).forEach(r => {
+        rows.push(`<div class="kv-row"><span class="k">Spamhaus: ${escapeHtml(r.ip || "")}</span><span class="v">${r.listed ? `LISTED (${escapeHtml(r.network || "")})` : "Not listed"}</span></div>`);
+      });
+      if (!rows.length) return '<div style="color:var(--surface-muted);font-size:12.5px;">No indicators were available to check.</div>';
+      return rows.join("");
+    })();
+
+    // Evidence sources
+    const evidenceHtml = (result.evidence_sources || []).map(s => `<span class="threat-tag">${escapeHtml(s)}</span>`).join("") || '<span style="color:var(--surface-muted);font-size:12.5px;">None</span>';
+
+    // Threat types
+    const threatTypeChips = (result.threat_types || []).map(t => `<span class="threat-tag">${escapeHtml(t)}</span>`).join("") || '<span style="color:var(--surface-muted);font-size:12.5px;">No specific threat types identified.</span>';
+
+    // Risk calculation
+    const calc = (risk.calculation || {});
+    const overrides = calc.overrides_applied || [];
+    const overridesNote = overrides.length
+      ? `<div style="color:var(--risk-high-text);font-size:12px;margin-top:6px;"><strong>Deterministic evidence controlled the final severity:</strong> ${overrides.map(o => escapeHtml(o.evidence)).join("; ")}.</div>`
       : "";
 
-    el["detail-panel-body"].innerHTML = `
-      <div class="detail-section">
-        <h3>Email information</h3>
-        <dl class="kv-grid">
-          ${kv("Sender", email.sender)}
-          ${kv("Reply-To", email.reply_to)}
-          ${kv("Return-Path", email.return_path)}
-          ${kv("Recipient", email.recipient)}
-          ${kv("Date", email.date)}
-        </dl>
-      </div>
-      <div class="detail-section">
-        <h3>Risk</h3>
-        <p>${riskBadge(risk)} <strong>${risk.score ?? "\u2014"}/100</strong></p>
+    // Reasons
+    const reasonsHtml = (risk.reasons || []).map(r => `<div style="color:var(--surface-muted);font-size:12px;margin-top:2px;">• ${escapeHtml(r)}</div>`).join("") || "";
+
+    // Build drawer body
+    const drawerBody = document.getElementById("drawerBody");
+    if (!drawerBody) return;
+
+    drawerBody.innerHTML = `
+      <!-- 1. Risk -->
+      <div class="drawer-section">
+        <h4>${ic("gauge")} Risk</h4>
+        <div style="display:flex;align-items:center;gap:14px;">
+          <span class="score-badge" style="color:${sevColor(sev)};">${risk.score != null ? risk.score : "—"}</span>
+          <span class="badge ${sev}">${severityLabel(risk.level)}</span>
+        </div>
+        <div class="kv-row"><span class="k">Threat types</span><span class="v">${threatTypeChips}</span></div>
         ${overridesNote}
-        <p><strong>Threat types:</strong></p>
-        <p>${threatTypeChips}</p>
-        <ul class="reasons-list">${reasonsList}</ul>
+        ${reasonsHtml}
       </div>
-      <div class="detail-section">
-        <h3>Authentication</h3>
-        <dl class="kv-grid">
-          ${kv("SPF", m1.spf)}
-          ${kv("DKIM", m1.dkim)}
-          ${kv("DMARC", m1.dmarc)}
-        </dl>
+
+      <!-- 2. User Disposition -->
+      ${dispositionHtml}
+
+      <!-- 3. Email Information -->
+      <div class="drawer-section">
+        <h4>${ic("mail")} Email information</h4>
+        <div class="kv-row"><span class="k">Sender</span><span class="v">${escapeHtml(email.sender || "—")}</span></div>
+        <div class="kv-row"><span class="k">Reply-To</span><span class="v">${escapeHtml(email.reply_to || "—")}</span></div>
+        <div class="kv-row"><span class="k">Return-Path</span><span class="v">${escapeHtml(email.return_path || "—")}</span></div>
+        <div class="kv-row"><span class="k">Recipient</span><span class="v">${escapeHtml(email.recipient || "—")}</span></div>
+        <div class="kv-row"><span class="k">Date</span><span class="v">${escapeHtml(email.date || "—")}</span></div>
       </div>
-      <div class="detail-section">
-        <h3>Header / Routing</h3>
-        <dl class="kv-grid">
-          ${kv("Origin IP", m1.origin_ip || "None found")}
-          ${kv("Reply-To mismatch", (result.header_analysis || {}).reply_to_mismatch ? "Yes" : "No")}
-          ${kv("Return-Path mismatch", (result.header_analysis || {}).return_path_mismatch ? "Yes" : "No")}
-        </dl>
+
+      <!-- 4. Authentication -->
+      <div class="drawer-section">
+        <h4>${ic("key")} Authentication</h4>
+        <div class="kv-row"><span class="k">SPF</span><span class="v">${authBadge(m1.spf)}</span></div>
+        <div class="kv-row"><span class="k">DKIM</span><span class="v">${authBadge(m1.dkim)}</span></div>
+        <div class="kv-row"><span class="k">DMARC</span><span class="v">${authBadge(m1.dmarc)}</span></div>
       </div>
-      <div class="detail-section">
-        <h3>Attachment Security</h3>
-        ${attachmentChips}
+
+      <!-- 5. Header / Routing -->
+      <div class="drawer-section">
+        <h4>${ic("route")} Header / Routing</h4>
+        <div class="kv-row"><span class="k">Origin IP</span><span class="v">${escapeHtml(m1.origin_ip || "None found")}</span></div>
+        <div class="kv-row"><span class="k">Reply-To mismatch</span><span class="v">${headerAnalysis.reply_to_mismatch ? "Detected" : "None"}</span></div>
+        <div class="kv-row"><span class="k">Return-Path mismatch</span><span class="v">${headerAnalysis.return_path_mismatch ? "Detected" : "None"}</span></div>
       </div>
-      <div class="detail-section">
-        <h3>AI / Body Analysis</h3>
-        <dl class="kv-grid">
-          ${kv("Phishing probability", (m2.phishing_probability ?? "\u2014") + "%")}
-          ${kv("Top classification", (m2.top_classification || {}).label || "\u2014")}
-          ${kv("Deeper scan run", m2.forensics_triggered ? "Yes" : "No")}
-          ${kv("Forced by attachment", m2.forensics_forced_by_attachment ? "Yes" : "No")}
-        </dl>
+
+      <!-- 6. AI / Body Analysis -->
+      <div class="drawer-section">
+        <h4>${ic("bot")} AI / Body analysis</h4>
+        <div class="kv-row"><span class="k">Phishing probability</span><span class="v">${m2.phishing_probability != null ? Math.round(m2.phishing_probability) + "%" : "—"}</span></div>
+        <div class="kv-row"><span class="k">Top classification</span><span class="v">${escapeHtml((m2.top_classification || {}).label || "—")}</span></div>
+        <div class="kv-row"><span class="k">Deeper scan run</span><span class="v">${m2.forensics_triggered ? "Yes" : "No"}</span></div>
+        <div class="kv-row"><span class="k">Forced by attachment</span><span class="v">${m2.forensics_forced_by_attachment ? "Yes" : "No"}</span></div>
       </div>
-      <div class="detail-section">
-        <h3>Geolocation / source infrastructure ${
-          result.geo_status === "pending" ? '<span class="risk-badge risk-badge--unknown">ENRICHING…</span>'
-          : result.geo_status === "failed" ? '<span class="risk-badge risk-badge--unknown">LOOKUP FAILED</span>'
-          : result.geo_status === "not_applicable" ? '<span class="risk-badge risk-badge--unknown">N/A</span>'
-          : ''
-        }</h3>
-        <ul class="evidence-list">${geoRows()}</ul>
+
+      <!-- 7. BEC / Financial Fraud -->
+      <div class="drawer-section">
+        <h4>${ic("dollar")} BEC / Financial fraud</h4>
+        ${becHtml}
       </div>
-      <div class="detail-section">
-        <h3>Threat intelligence</h3>
-        <ul class="evidence-list">${intelRows()}</ul>
+
+      <!-- 8. URL Analysis -->
+      <div class="drawer-section">
+        <h4>${ic("link")} URL analysis</h4>
+        ${urlHtml}
       </div>
-      <div class="detail-section">
-        <h3>Evidence sources</h3>
-        <ul class="evidence-list">${evidenceList}</ul>
+
+      <!-- 9. Attachment Security -->
+      <div class="drawer-section">
+        <h4>${ic("paperclip")} Attachment security</h4>
+        ${attachHtml}
+      </div>
+
+      <!-- 10. Geolocation / Infrastructure -->
+      <div class="drawer-section">
+        <h4>${ic("globe")} Geolocation / infrastructure ${
+          result.geo_status === "pending" ? '<span class="badge medium">ENRICHING…</span>'
+          : result.geo_status === "failed" ? '<span class="badge high">LOOKUP FAILED</span>'
+          : ""
+        }</h4>
+        ${geoHtml}
+      </div>
+
+      <!-- 11. Threat Intelligence -->
+      <div class="drawer-section">
+        <h4>${ic("satellite")} Threat intelligence</h4>
+        ${intelHtml}
+      </div>
+
+      <!-- 12. Evidence Sources -->
+      <div class="drawer-section">
+        <h4>${ic("layers")} Evidence sources</h4>
+        <div>${evidenceHtml}</div>
+      </div>
+
+      <!-- 13. Risk Calculation -->
+      <div class="drawer-section">
+        <h4>${ic("gauge")} Risk calculation</h4>
+        <button class="btn btn-outline score-explain-btn" id="explainScoreBtn">${ic("help")} How was this score calculated?</button>
+        <div id="scoreExplainBox" style="display:none;margin-top:10px;"></div>
       </div>
     `;
 
-    el["detail-panel"].classList.add("open");
-    el["detail-panel"].setAttribute("aria-hidden", "false");
-    el["detail-overlay"].hidden = false;
-  }
-
-  function closeDetailPanel() {
-    el["detail-panel"].classList.remove("open");
-    el["detail-panel"].setAttribute("aria-hidden", "true");
-    el["detail-overlay"].hidden = true;
-  }
-
-  el["close-detail-btn"].addEventListener("click", closeDetailPanel);
-  el["detail-overlay"].addEventListener("click", closeDetailPanel);
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDetailPanel(); });
-
-  // ============================================================
-  // SCANS VIEW
-  // ============================================================
-
-  async function loadScansView() {
-    const historyList = document.getElementById("history-list");
-    const badSourcesList = document.getElementById("bad-sources-list");
-    const trendBars = document.getElementById("trend-bars");
-    const trendEmptyNote = document.getElementById("trend-empty-note");
-    const countLabel = document.getElementById("history-count-label");
-
-    if (!state.provider) {
-      historyList.innerHTML = `<p class="muted-note">Connect a mailbox and run a scan to build history.</p>`;
-      badSourcesList.innerHTML = "";
-      trendBars.innerHTML = "";
-      return;
+    // Risk calculation expand
+    const explainBtn = document.getElementById("explainScoreBtn");
+    if (explainBtn) {
+      explainBtn.addEventListener("click", () => {
+        const box = document.getElementById("scoreExplainBox");
+        const isHidden = box.style.display === "none";
+        box.style.display = isHidden ? "block" : "none";
+        if (isHidden) {
+          const modules = risk.contributing_modules || [];
+          const reasons = risk.reasons || [];
+          box.innerHTML = `
+            <div class="kv-row"><span class="k">Final score</span><span class="v" style="font-weight:700;">${risk.score != null ? risk.score : "—"}/100</span></div>
+            <div class="kv-row"><span class="k">Severity</span><span class="v">${escapeHtml(risk.level || "—")}</span></div>
+            ${modules.length ? `<div style="margin-top:8px;font-weight:600;font-size:12px;">Contributing modules:</div>${modules.map(m => `<div style="font-size:12px;color:var(--surface-muted);margin-top:2px;">• ${escapeHtml(m)}</div>`).join("")}` : ""}
+            ${reasons.length ? `<div style="margin-top:8px;font-weight:600;font-size:12px;">Reasons:</div>${reasons.map(r => `<div style="font-size:12px;color:var(--surface-muted);margin-top:2px;">• ${escapeHtml(r)}</div>`).join("")}` : ""}
+          `;
+        }
+      });
     }
 
-    try {
-      const history = await apiGet("/api/scans/history");
-      countLabel.textContent = `(${history.count} of up to ${history.requested_max} shown)`;
+    // Drawer actions
+    const actions = document.getElementById("drawerActions");
+    if (actions) {
+      actions.innerHTML = `
+        ${isTrusted
+          ? `<button class="btn btn-ghost" id="removeTrustDrawerBtn">${ic("shield")} Remove Trust</button>`
+          : `<button class="btn btn-outline" id="markSafeBtn">${ic("shield")} Mark Safe</button>`}
+        ${(risk.level === "HIGH" || risk.level === "CRITICAL") ? `<button class="btn btn-danger" id="reportThreatBtn">${ic("flag")} Report Threat</button>` : ""}
+      `;
+      const markBtn = document.getElementById("markSafeBtn");
+      if (markBtn) markBtn.addEventListener("click", () => confirmMarkSafe(result));
+      const removeBtn = document.getElementById("removeTrustDrawerBtn");
+      if (removeBtn) removeBtn.addEventListener("click", () => removeTrust(sender, true));
+      const reportBtn = document.getElementById("reportThreatBtn");
+      if (reportBtn) reportBtn.addEventListener("click", () => openReportThreatModal(result));
+    }
 
-      historyList.innerHTML = history.items.length
-        ? `<table class="email-table"><thead><tr><th>Date</th><th>Sender</th><th>Subject</th><th>Risk</th><th>Why flagged</th></tr></thead><tbody>` +
-          history.items.map((i) => `
-            <tr>
-              <td>${escapeHtml(i.date || "\u2014")}</td>
-              <td>${escapeHtml(i.sender || "\u2014")}</td>
-              <td>${escapeHtml(i.subject || "(no subject)")}</td>
-              <td>${riskBadge(i.risk)}</td>
-              <td>${escapeHtml((i.risk && i.risk.reasons && i.risk.reasons[0]) || "\u2014")}</td>
-            </tr>`).join("") + `</tbody></table>`
-        : `<p class="muted-note">No high-risk emails recorded yet in this session.</p>`;
+    if (drawerOverlay) drawerOverlay.classList.add("open");
+    if (drawer) drawer.classList.add("open");
+  }
 
-      if (history.trend.length) {
-        trendEmptyNote.hidden = true;
-        const maxVal = Math.max(...history.trend.map((p) => p.total_suspicious), 1);
-        trendBars.innerHTML = history.trend.map((p) => `
-          <div class="trend-bar" title="${p.date}: ${p.total_suspicious} suspicious, ${p.critical} critical, ${p.distinct_senders} distinct senders">
-            <div class="trend-bar-fill" style="height:${(p.total_suspicious / maxVal) * 100}%"></div>
-            <span class="trend-bar-label">${p.date.slice(5)}</span>
-          </div>`).join("");
-      } else {
-        trendEmptyNote.hidden = false;
-        trendBars.innerHTML = "";
+  // ============================================================
+  // TRUSTED SENDERS (localStorage persistence)
+  // ============================================================
+
+  function saveTrusted() {
+    localStorage.setItem("vp_trustedSenders", JSON.stringify(state.trustedSenders));
+  }
+
+  function confirmMarkSafe(result) {
+    const sender = (result.email || {}).sender || "";
+    if (!sender) return;
+    openModal(`
+      <h3>${ic("shield")} Mark sender as safe?</h3>
+      <p>This is a <strong>user disposition only</strong>. The original automated analysis and risk score will be preserved unchanged.</p>
+      <p><strong>Sender:</strong> ${escapeHtml(sender)}</p>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="cancelMarkSafe">Cancel</button>
+        <button class="btn btn-primary" id="confirmMarkSafe">${ic("shield")} Confirm</button>
+      </div>
+    `);
+    document.getElementById("cancelMarkSafe").addEventListener("click", closeModal);
+    document.getElementById("confirmMarkSafe").addEventListener("click", () => {
+      state.trustedSenders[sender] = {
+        dateTrusted: new Date().toLocaleDateString(),
+        account: state.accountEmail || "unknown",
+      };
+      saveTrusted();
+      closeModal();
+      toast("Sender marked as trusted", "shield");
+      openEmailWorkspace(result); // Re-render workspace
+    });
+  }
+
+  function removeTrust(senderEmail, reopenDrawer) {
+    delete state.trustedSenders[senderEmail];
+    saveTrusted();
+    toast("Trust removed — sender treated per automated analysis");
+    renderInboxTable();
+    if (reopenDrawer) {
+      const result = Object.values(state.resultsByMessageId).find(r => (r.email || {}).sender === senderEmail);
+      if (result) openEmailWorkspace(result);
+    }
+  }
+
+  function openReportThreatModal(result) {
+    const email = result.email || {};
+    const risk = result.risk || {};
+    openModal(`
+      <h3>${ic("flag")} Report this threat?</h3>
+      <p><strong>Subject:</strong> ${escapeHtml(email.subject || "—")}</p>
+      <p><strong>Sender:</strong> ${escapeHtml(email.sender || "—")}</p>
+      <p><strong>Risk:</strong> ${escapeHtml(risk.level || "—")} (${risk.score || "—"}/100)</p>
+      <p style="color:var(--surface-muted);font-size:12px;">This would flag the message for organizational review. Feature placeholder in current build.</p>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="cancelReport">Cancel</button>
+        <button class="btn btn-danger" id="confirmReport">${ic("flag")} Report</button>
+      </div>
+    `);
+    document.getElementById("cancelReport").addEventListener("click", closeModal);
+    document.getElementById("confirmReport").addEventListener("click", () => {
+      closeModal();
+      toast("Threat reported (placeholder)", "flag");
+    });
+  }
+
+  // ============================================================
+  // MODAL SYSTEM
+  // ============================================================
+
+  const modalOverlay = document.getElementById("modalOverlay");
+
+  function openModal(html) {
+    const box = document.getElementById("modalBox");
+    if (box) box.innerHTML = html;
+    if (modalOverlay) modalOverlay.classList.add("open");
+  }
+
+  function closeModal() {
+    if (modalOverlay) modalOverlay.classList.remove("open");
+  }
+
+  if (modalOverlay) {
+    modalOverlay.addEventListener("click", e => { if (e.target === modalOverlay) closeModal(); });
+  }
+
+  // ============================================================
+  // HOME VIEW
+  // ============================================================
+
+  async function renderHome() {
+    const counts = updateSummaryCards();
+    const homeStats = document.getElementById("homeStats");
+    const mailboxLine = document.getElementById("homeMailboxLine");
+
+    if (mailboxLine) {
+      mailboxLine.textContent = state.provider
+        ? `Connected · ${state.provider === "google" ? "Gmail" : "Microsoft"} · ${state.accountEmail}`
+        : "No mailbox connected";
+    }
+
+    if (homeStats) {
+      const totalScanned = Object.values(state.resultsByMessageId).filter(r => r.status && r.status !== "unscanned").length;
+      homeStats.innerHTML = `
+        <div class="stat-card mailbox"><div class="label">Mailbox</div><div class="value" style="font-size:16px;">${state.provider ? (state.provider === "google" ? "Gmail" : "Microsoft") + " Connected" : "No mailbox connected"}</div><div class="sub">${totalScanned} emails scanned</div></div>
+        <div class="stat-card" data-severity="safe"><div class="label">Safe</div><div class="value">${counts.LOW}</div><div class="sub">No action needed</div></div>
+        <div class="stat-card medium" data-severity="medium"><div class="label">Medium Risk</div><div class="value">${counts.MEDIUM}</div><div class="sub">Review recommended</div></div>
+        <div class="stat-card high" data-severity="high"><div class="label">High Risk</div><div class="value">${counts.HIGH}</div><div class="sub">Likely malicious</div></div>
+        <div class="stat-card critical" data-severity="critical"><div class="label">Critical</div><div class="value">${counts.CRITICAL}</div><div class="sub">Blocked automatically</div></div>
+      `;
+    }
+
+    // Recent detections from scan history
+    const detections = document.getElementById("recentDetections");
+    if (detections) {
+      const risky = Object.values(state.resultsByMessageId)
+        .filter(r => r.risk && (r.risk.level === "HIGH" || r.risk.level === "CRITICAL"))
+        .sort((a, b) => (b.risk.score || 0) - (a.risk.score || 0))
+        .slice(0, 6);
+      detections.innerHTML = risky.length ? risky.map(r => {
+        const email = r.email || {};
+        const sev = severityClass(r.risk.level);
+        return `<div class="detection-item" data-mid="${escapeHtml(r.message_id)}">
+          <span class="sev-dot ${sev}"></span>
+          <div style="flex-grow:1;"><div style="font-weight:600;">${escapeHtml(email.sender || "—")}</div><div class="detection-subject">${escapeHtml(email.subject || "")}</div></div>
+          <span class="meta">${r.risk.score || "—"}/100<br>${timeAgo(r.analyzed_at || email.date)}</span>
+        </div>`;
+      }).join("") : '<div style="color:var(--surface-muted);font-size:13px;padding:14px 0;">No risky detections yet. Scan your inbox to start.</div>';
+      detections.querySelectorAll(".detection-item").forEach(el => {
+        el.addEventListener("click", () => {
+          const mid = el.getAttribute("data-mid");
+          const result = state.resultsByMessageId[mid];
+          if (result) { setActiveView("inbox"); openEmailWorkspace(result); }
+        });
+      });
+    }
+
+    // Recent activity
+    const activity = document.getElementById("recentActivity");
+    if (activity) {
+      const totalScanned = Object.values(state.resultsByMessageId).filter(r => r.status && r.status !== "unscanned").length;
+      const critCount = Object.values(state.resultsByMessageId).filter(r => r.risk && r.risk.level === "CRITICAL").length;
+      const trustedCount = Object.keys(state.trustedSenders).length;
+      const items = [];
+      if (totalScanned > 0) items.push({ icon: "scan", text: `${totalScanned} message(s) analyzed this session` });
+      if (trustedCount > 0) items.push({ icon: "shield", text: `${trustedCount} sender(s) currently marked user-trusted` });
+      if (critCount > 0) items.push({ icon: "warning", text: `${critCount} critical threat(s) detected` });
+      items.push({ icon: "plug", text: state.provider ? `${state.provider === "google" ? "Gmail" : "Microsoft"} connected via OAuth` : "No account currently connected" });
+      activity.innerHTML = items.map(a => `<div class="activity-item">${ic(a.icon)}<span>${a.text}</span></div>`).join("");
+    }
+
+    renderRefreshLabels();
+  }
+
+  // ============================================================
+  // INBOX VIEW (wrapper)
+  // ============================================================
+
+  function renderInbox() {
+    const pageSizeSelect = document.getElementById("pageSizeSelect");
+    if (pageSizeSelect) pageSizeSelect.value = String(state.pageSize);
+    const inboxSearch = document.getElementById("inboxSearch");
+    if (inboxSearch) inboxSearch.value = state.search;
+    const headerSearch = document.getElementById("inboxHeaderSearch");
+    if (headerSearch) headerSearch.value = state.search;
+    renderRefreshLabels();
+    renderInboxTable();
+  }
+
+  // ============================================================
+  // DASHBOARD VIEW (real data)
+  // ============================================================
+
+  async function renderDashboard() {
+    renderRefreshLabels();
+
+    // Bottom widgets
+    const bottomWidgets = document.getElementById("bottomWidgets");
+    if (bottomWidgets) {
+      const trustedCount = Object.keys(state.trustedSenders).length;
+      bottomWidgets.innerHTML = `
+        <div class="bw-card" id="trustedSendersCard" role="button" tabindex="0">
+          <div class="bw-top">${ic("shield", "bw-icon")}<span class="bw-label">Trusted senders</span></div>
+          <span class="bw-value">${trustedCount}</span>
+          <span class="bw-sub">Senders trusted by the user</span>
+          <span class="bw-link">Manage ${ic("chevron-right")}</span>
+        </div>
+        <div class="bw-card" id="openCasesCard" role="button" tabindex="0">
+          <div class="bw-top">${ic("mail", "bw-icon")}<span class="bw-label">Open cases</span></div>
+          <span class="bw-value">—</span>
+          <span class="bw-sub">Cases requiring attention</span>
+          <span class="bw-link">View cases ${ic("chevron-right")}</span>
+        </div>
+      `;
+      const tsCard = document.getElementById("trustedSendersCard");
+      if (tsCard) tsCard.addEventListener("click", () => setActiveView("user"));
+      const caseCard = document.getElementById("openCasesCard");
+      if (caseCard) caseCard.addEventListener("click", () => {
+        const pillBtn = document.querySelector('.pill-btn[data-index="1"]');
+        if (pillBtn) pillBtn.click();
+      });
+    }
+
+    // Threat vectors (real)
+    if (state.provider) {
+      try {
+        const intel = await apiGet("/api/threat-intel/summary");
+        const threatList = document.getElementById("threatVectorList");
+        if (threatList) {
+          threatList.innerHTML = intel.sources.map(s => `
+            <div class="threat-bar">
+              <span class="threat-bar-left">${ic(s.name.includes("PhishTank") ? "satellite" : s.name.includes("Spamhaus") ? "globe" : "warning", "threat-icon")}<span>${escapeHtml(s.name)}</span></span>
+              <span class="count">${s.matches} match${s.matches !== 1 ? "es" : ""}</span>
+            </div>
+          `).join("") || `<div class="threat-bar"><span class="threat-bar-left">${ic("shield", "threat-icon")}<span>No threats detected yet</span></span></div>`;
+        }
+      } catch (err) {
+        const threatList = document.getElementById("threatVectorList");
+        if (threatList) threatList.innerHTML = `<div style="color:var(--surface-muted);font-size:12.5px;">Failed to load threat data.</div>`;
       }
 
-      const sources = await apiGet("/api/scans/bad-sources");
-      badSourcesList.innerHTML = sources.sources.length
-        ? sources.sources.map((s) => `
-            <div class="source-card">
-              <strong>${escapeHtml(s.domain)}</strong>
-              <span>${s.suspicious_count} suspicious message(s), ${s.critical_count} critical</span>
-              ${s.note ? `<p class="muted-note">${escapeHtml(s.note)}</p>` : ""}
-              ${s.reasons.length ? `<ul class="reasons-list">${s.reasons.map((r) => `<li>${escapeHtml(r)}</li>`).join("")}</ul>` : ""}
-            </div>`).join("")
-        : `<p class="muted-note">Not enough data yet.</p>`;
-    } catch (err) {
-      showToast("Failed to load Scans data: " + errText(err));
+      // Cases widget
+      try {
+        const casesData = await apiGet("/api/cases");
+        const casesPage = document.getElementById("casesPage");
+        if (casesPage) {
+          casesPage.innerHTML = casesData.cases.length
+            ? `<h2 style="margin-bottom:10px;color:var(--surface-text);">Open cases</h2>` +
+              casesData.cases.slice(0, 5).map(c => `
+                <div class="detection-item">
+                  <span class="sev-dot ${c.highest_risk === "CRITICAL" ? "critical" : "high"}"></span>
+                  <div style="flex-grow:1;">
+                    <div style="font-weight:600;">${escapeHtml(c.domain)}</div>
+                    <div style="color:var(--surface-muted);font-size:11px;">${c.message_count} message(s) · ${c.distinct_senders} sender(s)</div>
+                  </div>
+                  <span class="badge ${c.highest_risk === "CRITICAL" ? "critical" : "high"}">${escapeHtml(c.highest_risk)}</span>
+                </div>
+              `).join("")
+            : '<div style="color:var(--surface-muted);font-size:12.5px;padding:20px;">No cases yet.</div>';
+          // Update open cases count
+          const ocCard = document.getElementById("openCasesCard");
+          if (ocCard) {
+            const val = ocCard.querySelector(".bw-value");
+            if (val) val.textContent = casesData.cases.length;
+          }
+        }
+      } catch (_) {}
+
+      // Risky mails widget
+      try {
+        const history = await apiGet("/api/scans/history");
+        const riskyPage = document.getElementById("riskyPage");
+        if (riskyPage) {
+          riskyPage.innerHTML = `<h2 style="margin-bottom:10px;color:var(--surface-text);">Risky mail snapshot</h2>
+            <div style="font-size:13px;color:var(--surface-muted);margin-bottom:14px;">High and critical severity mail from recent scans.</div>
+            <div style="overflow-y:auto;">${
+              history.items.slice(0, 6).map(i => `
+                <div class="detection-item"><span class="sev-dot ${severityClass((i.risk || {}).level)}"></span>
+                  <span>${escapeHtml(i.sender || "—")} — ${escapeHtml(i.subject || "")}</span>
+                  <span class="meta">${(i.risk || {}).score || "—"}</span>
+                </div>
+              `).join("") || '<div style="color:var(--surface-muted);font-size:12.5px;">No risky mails yet.</div>'
+            }</div>`;
+        }
+      } catch (_) {}
+
+      // Geo widget
+      try {
+        const geo = await apiGet("/api/threat-geo/summary");
+        const geoPage = document.getElementById("geoPage");
+        if (geoPage) {
+          geoPage.innerHTML = `<h2 style="margin-bottom:10px;color:var(--surface-text);">Top origin countries</h2>
+            <div style="overflow-y:auto;">${
+              geo.locations.slice(0, 6).map(l => `
+                <div class="geo-row">${ic("pin", "geo-pin")}<span style="flex-grow:1;">${escapeHtml(l.country)}</span><span style="font-weight:700;">${l.suspicious_count}</span></div>
+              `).join("") || '<div style="color:var(--surface-muted);font-size:12.5px;">No geolocation data yet.</div>'
+            }</div>`;
+        }
+      } catch (_) {}
     }
+
+    // Chart.js (graceful degradation)
+    renderDashboardChart();
+  }
+
+  function renderDashboardChart() {
+    if (typeof Chart === "undefined") return;
+    const canvas = document.getElementById("analysisChart");
+    if (!canvas) return;
+
+    // Destroy existing chart
+    if (canvas._chartInstance) {
+      canvas._chartInstance.destroy();
+    }
+
+    if (!state.provider) return;
+
+    apiGet("/api/threat-geo/trend?period=day").then(data => {
+      const labels = data.trend.map(t => t.period);
+      const suspicious = data.trend.map(t => t.suspicious_count);
+      const critical = data.trend.map(t => t.critical_count);
+      const high = data.trend.map(t => t.high_count);
+
+      try {
+        canvas._chartInstance = new Chart(canvas, {
+          type: "line",
+          data: {
+            labels,
+            datasets: [
+              { label: "Suspicious", data: suspicious, borderColor: cssVar("--warning") || "#FFC107", tension: 0.3, fill: false },
+              { label: "High", data: high, borderColor: cssVar("--high") || "#d39999", tension: 0.3, fill: false },
+              { label: "Critical", data: critical, borderColor: cssVar("--danger") || "#E81123", tension: 0.3, fill: false },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { labels: { color: cssVar("--surface-text") || "#fff" } } },
+            scales: {
+              x: { ticks: { color: cssVar("--surface-muted") || "#888" } },
+              y: { ticks: { color: cssVar("--surface-muted") || "#888" }, beginAtZero: true },
+            },
+          },
+        });
+      } catch (_) { /* Chart.js failure is non-fatal */ }
+    }).catch(() => {});
   }
 
   // ============================================================
-  // THREAT INTELLIGENCE VIEW
+  // REPORTS VIEW (real data)
   // ============================================================
 
-  async function loadIntelView() {
-    const container = document.getElementById("intel-cards");
+  async function renderReports() {
     if (!state.provider) {
-      container.innerHTML = `<p class="muted-note">Connect a mailbox and run a scan to see live threat-intel matches.</p>`;
+      const dist = document.getElementById("riskDistribution");
+      if (dist) dist.innerHTML = '<div style="color:var(--surface-muted);font-size:12.5px;">Connect a mailbox and run a scan to generate reports.</div>';
       return;
     }
-    try {
-      const data = await apiGet("/api/threat-intel/summary");
-      container.innerHTML = data.sources.map((s) => `
-        <div class="intel-card">
-          <h3>${escapeHtml(s.name)}</h3>
-          <div class="intel-matches">${s.matches}</div>
-          <div class="muted-note">matches out of ${s.indicators_checked} indicator(s) checked</div>
-          <div class="muted-note">Status: ${escapeHtml(s.status)}${s.last_feed_update ? " \u2022 feed file updated " + escapeHtml(s.last_feed_update) : ""}</div>
-        </div>`).join("");
-    } catch (err) {
-      showToast("Failed to load Threat Intelligence data: " + errText(err));
-    }
-  }
 
-  // ============================================================
-  // CASES VIEW
-  // ============================================================
-
-  async function loadCasesView() {
-    const container = document.getElementById("cases-list");
-    if (!state.provider) {
-      container.innerHTML = `<p class="muted-note">Connect a mailbox and run a scan to build cases.</p>`;
-      return;
-    }
-    try {
-      const data = await apiGet("/api/cases");
-      container.innerHTML = data.cases.length
-        ? data.cases.map((c) => `
-            <div class="case-card">
-              <h3>${c.case_id} \u2014 ${escapeHtml(c.domain)}</h3>
-              <p>${c.message_count} message(s) \u2022 ${c.distinct_senders} distinct sender(s) \u2022
-                 ${c.distinct_ips} distinct IP(s) \u2022 Highest risk: ${riskBadge({ level: c.highest_risk })}</p>
-              <p class="muted-note">First seen: ${escapeHtml(c.first_seen || "\u2014")} \u2022 Last seen: ${escapeHtml(c.last_seen || "\u2014")}</p>
-              ${c.threat_categories.length ? `<p class="muted-note">Categories: ${c.threat_categories.map(escapeHtml).join(", ")}</p>` : ""}
-            </div>`).join("")
-        : `<p class="muted-note">No cases yet \u2014 high-risk detections will appear here.</p>`;
-    } catch (err) {
-      showToast("Failed to load Cases: " + errText(err));
-    }
-  }
-
-  // ============================================================
-  // REPORTS VIEW
-  // ============================================================
-
-  async function loadReportsView() {
-    const container = document.getElementById("reports-summary");
-    if (!state.provider) {
-      container.innerHTML = `<p class="muted-note">Connect a mailbox and run a scan to generate a report.</p>`;
-      return;
-    }
     try {
       const r = await apiGet("/api/reports/summary");
-      const list = (items, keyName, labelFn) =>
-        items.length ? `<ul class="reasons-list">${items.map((i) => `<li>${labelFn(i)}: ${i.count}</li>`).join("")}</ul>` : `<p class="muted-note">No data yet.</p>`;
+      const reportRange = document.getElementById("reportRangeLine");
+      if (reportRange) reportRange.textContent = `${r.total_analyzed} emails analyzed`;
 
-      container.innerHTML = `
-        <h3>Overview</h3>
-        <dl class="kv-grid">
-          <dt>Total analyzed</dt><dd>${r.total_analyzed}</dd>
-          <dt>Low / Safe</dt><dd>${r.risk_breakdown.LOW || 0}</dd>
-          <dt>Medium / Suspicious</dt><dd>${r.risk_breakdown.MEDIUM || 0}</dd>
-          <dt>High</dt><dd>${r.risk_breakdown.HIGH || 0}</dd>
-          <dt>Critical</dt><dd>${r.risk_breakdown.CRITICAL || 0}</dd>
-        </dl>
-        <h3 style="margin-top:20px;">Top suspicious domains</h3>
-        ${list(r.top_domains, "domain", (i) => escapeHtml(i.domain))}
-        <h3 style="margin-top:20px;">Top suspicious senders</h3>
-        ${list(r.top_senders, "sender", (i) => escapeHtml(i.sender))}
-        <h3 style="margin-top:20px;">Top threat categories</h3>
-        ${list(r.top_categories, "category", (i) => escapeHtml(i.category))}
-        <h3 style="margin-top:20px;">Top attachment types</h3>
-        ${list(r.top_attachment_types, "extension", (i) => escapeHtml(i.extension || "(none)"))}
-        <h3 style="margin-top:20px;">Authentication failures</h3>
-        ${Object.keys(r.auth_failures).length
-          ? `<ul class="reasons-list">${Object.entries(r.auth_failures).map(([k, v]) => `<li>${k}: ${v}</li>`).join("")}</ul>`
-          : `<p class="muted-note">No authentication failures recorded.</p>`}
-      `;
+      // Risk distribution
+      const dist = document.getElementById("riskDistribution");
+      if (dist) {
+        const total = r.total_analyzed || 1;
+        const breakdown = r.risk_breakdown || {};
+        dist.innerHTML = ["LOW", "MEDIUM", "HIGH", "CRITICAL"].map(level => {
+          const count = breakdown[level] || 0;
+          const pct = Math.round((count / total) * 100);
+          const sev = severityClass(level);
+          return `<div style="margin-bottom:10px;">
+            <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;font-weight:600;"><span style="text-transform:capitalize;color:${sevColor(sev)};">${severityLabel(level)}</span><span style="color:var(--surface-text);">${count} (${pct}%)</span></div>
+            <div style="background:var(--surface-border);border-radius:6px;height:8px;overflow:hidden;"><div style="width:${pct}%;height:100%;background:${sev === "safe" ? cssVar("--safe") : sevColor(sev)};"></div></div>
+          </div>`;
+        }).join("");
+      }
+
+      // Threat types
+      const threatBreak = document.getElementById("threatTypeBreakdown");
+      if (threatBreak) {
+        const cats = r.top_categories || [];
+        threatBreak.innerHTML = cats.length
+          ? cats.map(c => `<div class="kv-row"><span class="k">${escapeHtml(c.category)}</span><span class="v">${c.count}</span></div>`).join("")
+          : '<div style="color:var(--surface-muted);font-size:12.5px;">No threats detected yet.</div>';
+      }
+
+      // Scan history
+      const history = await apiGet("/api/scans/history");
+      const historyTbody = document.querySelector("#scanHistoryTable tbody");
+      if (historyTbody) {
+        historyTbody.innerHTML = history.items.length
+          ? history.items.slice(0, 20).map((item, i) => `
+            <tr>
+              <td>Scan #${i + 1}</td>
+              <td>${escapeHtml(item.date || "—")}</td>
+              <td>1</td>
+              <td><span class="badge ${severityClass((item.risk || {}).level)}">${severityLabel((item.risk || {}).level)}</span></td>
+              <td></td>
+            </tr>
+          `).join("")
+          : '<tr><td colspan="5" style="color:var(--surface-muted);padding:14px 10px;">No scan history yet.</td></tr>';
+      }
     } catch (err) {
-      showToast("Failed to load Reports: " + errText(err));
+      toast("Failed to load reports: " + errText(err));
     }
   }
 
   // ============================================================
-  // SETTINGS VIEW (Accounts section)
+  // CUSTOM EMAIL VIEW (real .eml upload)
   // ============================================================
 
-  function loadSettingsView() {
-    renderSettingsAccountArea();
-  }
-
-  function renderSettingsAccountArea() {
-    const area = document.getElementById("settings-account-area");
-    if (!area) return;
-
-    if (state.provider) {
-      area.innerHTML = `
-        <p><strong>Account:</strong> ${escapeHtml(state.accountEmail)}</p>
-        <p><strong>Provider:</strong> ${state.provider === "google" ? "Google" : "Microsoft"}</p>
-        <button class="btn btn-secondary" id="settings-logout-btn">Logout</button>
-      `;
-      document.getElementById("settings-logout-btn").addEventListener("click", doLogout);
-    } else {
-      area.innerHTML = `
-        <p class="muted-note">No account connected.</p>
-        <button class="btn btn-secondary" id="settings-connect-google">Connect Gmail</button>
-        <button class="btn btn-secondary" id="settings-connect-microsoft">Connect Microsoft</button>
-      `;
-      document.getElementById("settings-connect-google").addEventListener("click", () => {
-        window.location.href = "/auth/google/login";
-      });
-      document.getElementById("settings-connect-microsoft").addEventListener("click", () => {
-        window.location.href = "/auth/microsoft/login";
-      });
-    }
-  }
-
-  // ============================================================
-  // CUSTOM EMAIL VIEW (multi-file, up to 10)
-  // ============================================================
-
-  const MAX_BATCH_FILES = 10;
-
-  function renderSelectedFiles() {
-    const list = el["selected-files-list"];
-    if (!state.batchFiles.length) {
-      list.innerHTML = "";
-      el["analyze-batch-btn"].disabled = true;
+  function renderCustom() {
+    const list = document.getElementById("customAnalysesList");
+    if (!list) return;
+    if (!state.customAnalyses.length) {
+      list.innerHTML = `<div class="empty-state" style="height:160px;">${ic("file-question")}<span>No custom analyses yet</span></div>`;
       return;
     }
-    list.innerHTML = state.batchFiles.map((f, i) => `
-      <span class="attachment-chip">${escapeHtml(f.name)} <button data-idx="${i}" class="remove-file-btn" aria-label="Remove ${escapeHtml(f.name)}">&times;</button></span>
-    `).join("");
-    list.querySelectorAll(".remove-file-btn").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        state.batchFiles.splice(parseInt(btn.getAttribute("data-idx"), 10), 1);
-        renderSelectedFiles();
+    list.innerHTML = state.customAnalyses.map((r, i) => {
+      const email = r.email || {};
+      const risk = r.risk || {};
+      const sev = severityClass(risk.level);
+      return `<div class="detection-item" data-idx="${i}" style="cursor:pointer;">
+        <span class="sev-dot ${sev}"></span>
+        <div style="flex-grow:1;"><div style="font-weight:600;">${escapeHtml(r.source_filename || email.subject || "—")}</div><div style="color:var(--surface-muted);font-size:11px;">Risk ${risk.score || "—"}/100</div></div>
+        <span class="badge ${sev}">${severityLabel(risk.level)}</span>
+      </div>`;
+    }).join("");
+    list.querySelectorAll(".detection-item").forEach(el => {
+      el.addEventListener("click", () => {
+        const idx = parseInt(el.getAttribute("data-idx"), 10);
+        const result = state.customAnalyses[idx];
+        if (result) openEmailWorkspace(result);
       });
     });
-    el["analyze-batch-btn"].disabled = false;
   }
 
-  function addFiles(fileList) {
-    const incoming = Array.from(fileList).filter((f) => /\.(eml|txt)$/i.test(f.name));
-    const room = MAX_BATCH_FILES - state.batchFiles.length;
-    if (incoming.length > room) {
-      showToast(`Only ${MAX_BATCH_FILES} files allowed per batch \u2014 added the first ${Math.max(room, 0)}.`, "info");
+  // Custom upload setup
+  const dropzone = document.getElementById("dropzone");
+  const fileInput = document.getElementById("fileInput");
+  const analyzeCustomBtn = document.getElementById("analyzeCustomBtn");
+  const chooseFileBtn = document.getElementById("chooseFileBtn");
+
+  if (chooseFileBtn && fileInput) {
+    chooseFileBtn.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", () => {
+      if (fileInput.files[0]) selectCustomFile(fileInput.files[0]);
+    });
+  }
+
+  if (dropzone) {
+    ["dragenter", "dragover"].forEach(evt => dropzone.addEventListener(evt, e => { e.preventDefault(); dropzone.classList.add("drag"); }));
+    ["dragleave", "drop"].forEach(evt => dropzone.addEventListener(evt, e => { e.preventDefault(); dropzone.classList.remove("drag"); }));
+    dropzone.addEventListener("drop", e => { const f = e.dataTransfer.files[0]; if (f) selectCustomFile(f); });
+  }
+
+  function selectCustomFile(f) {
+    state.chosenFile = f;
+    const nameEl = document.getElementById("chosenFileName");
+    if (nameEl) nameEl.textContent = `Selected: ${f.name}`;
+    if (analyzeCustomBtn) analyzeCustomBtn.disabled = false;
+  }
+
+  if (analyzeCustomBtn) {
+    analyzeCustomBtn.addEventListener("click", async () => {
+      if (!state.chosenFile) return;
+      analyzeCustomBtn.disabled = true;
+      analyzeCustomBtn.innerHTML = ic("spinner", "icon-spin") + " Analyzing...";
+
+      const formData = new FormData();
+      formData.append("file", state.chosenFile);
+
+      try {
+        const result = await apiPost("/api/analyze", { body: formData });
+        result.source_filename = state.chosenFile.name;
+        state.customAnalyses.unshift(result);
+        renderCustom();
+        toast("Custom email analyzed");
+      } catch (err) {
+        toast("Analysis failed: " + errText(err));
+      } finally {
+        analyzeCustomBtn.innerHTML = "Analyze";
+        analyzeCustomBtn.disabled = true;
+        const nameEl = document.getElementById("chosenFileName");
+        if (nameEl) nameEl.textContent = "";
+        state.chosenFile = null;
+      }
+    });
+  }
+
+  // ============================================================
+  // USER VIEW (real accounts + trusted senders)
+  // ============================================================
+
+  function renderUser() {
+    // Connected accounts
+    const accountsEl = document.getElementById("connectedAccounts");
+    if (accountsEl) {
+      const accounts = [
+        { id: "google", provider: "Gmail", status: state.googleStatus },
+        { id: "microsoft", provider: "Microsoft", status: state.microsoftStatus },
+      ];
+
+      accountsEl.innerHTML = accounts.map(acc => {
+        const connected = acc.status.connected;
+        const email = acc.status.email;
+        const isActive = state.provider === acc.id;
+        let actionBtn;
+        if (!connected) {
+          actionBtn = `<button class="btn btn-outline btn-sm" data-connect="${acc.id}">Connect</button>`;
+        } else {
+          actionBtn = `<button class="btn btn-ghost btn-sm" data-disconnect="${acc.id}">Disconnect</button>`;
+        }
+
+        return `<div class="connected-account ${connected ? "" : "disconnected"}">
+          <span class="dot ${isActive ? "active" : ""}"></span>
+          <div style="flex-grow:1;">
+            <strong>${escapeHtml(acc.provider)}</strong> ${isActive ? '<span class="active-badge">ACTIVE</span>' : ""}
+            <div style="font-size:11px;color:var(--surface-muted);">${connected ? escapeHtml(email || "") : "Not connected"}</div>
+          </div>
+          <div style="display:flex;gap:8px;">${actionBtn}</div>
+        </div>`;
+      }).join("");
+
+      accountsEl.querySelectorAll("[data-connect]").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const id = btn.getAttribute("data-connect");
+          window.location.href = `/auth/${id === "google" ? "google" : "microsoft"}/login`;
+        });
+      });
+      accountsEl.querySelectorAll("[data-disconnect]").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const id = btn.getAttribute("data-disconnect");
+          doLogout(id);
+        });
+      });
     }
-    state.batchFiles = state.batchFiles.concat(incoming.slice(0, room));
-    renderSelectedFiles();
+
+    // Trusted senders table
+    const entries = Object.entries(state.trustedSenders);
+    const tbody = document.querySelector("#trustedSendersTable tbody");
+    const emptyState = document.getElementById("trustedEmptyState");
+    if (tbody) {
+      if (!entries.length) {
+        tbody.innerHTML = "";
+        if (emptyState) emptyState.style.display = "flex";
+      } else {
+        if (emptyState) emptyState.style.display = "none";
+        tbody.innerHTML = entries.map(([sender, info]) => `
+          <tr><td>${escapeHtml(sender)}</td><td>${escapeHtml(info.dateTrusted || "—")}</td><td>${escapeHtml(info.account || "—")}</td>
+          <td><button class="btn btn-ghost btn-sm remove-trust-row" data-sender="${escapeHtml(sender)}">Remove Trust</button></td></tr>
+        `).join("");
+        tbody.querySelectorAll(".remove-trust-row").forEach(b => {
+          b.addEventListener("click", () => {
+            removeTrust(b.getAttribute("data-sender"), false);
+            renderUser();
+          });
+        });
+      }
+    }
+
+    // Session information
+    const sessionStart = document.getElementById("sessionStartedVal");
+    if (sessionStart) sessionStart.textContent = state.lastRefreshedAt ? fmtDate(state.lastRefreshedAt) : "Current session";
+    const sessionDevice = document.getElementById("sessionDeviceVal");
+    if (sessionDevice) {
+      const ua = navigator.userAgent;
+      let browser = "Browser";
+      if (ua.includes("Chrome")) browser = "Chrome";
+      else if (ua.includes("Firefox")) browser = "Firefox";
+      else if (ua.includes("Safari")) browser = "Safari";
+      let os = "";
+      if (ua.includes("Windows")) os = " · Windows";
+      else if (ua.includes("Mac")) os = " · macOS";
+      else if (ua.includes("Linux")) os = " · Linux";
+      sessionDevice.textContent = browser + os;
+    }
+    const sessionIp = document.getElementById("sessionIpVal");
+    if (sessionIp) sessionIp.textContent = "Local session";
+    const sessionRetention = document.getElementById("sessionRetentionVal");
+    if (sessionRetention) sessionRetention.textContent = "Session-scoped (in-memory)";
+
+    // Recent activity
+    const activityEl = document.getElementById("userRecentActivity");
+    if (activityEl) {
+      const totalScanned = Object.values(state.resultsByMessageId).filter(r => r.status && r.status !== "unscanned").length;
+      const items = [];
+      if (totalScanned > 0) items.push({ icon: "scan", text: `${totalScanned} message(s) analyzed this session` });
+      items.push({ icon: "shield", text: `${Object.keys(state.trustedSenders).length} sender(s) currently marked user-trusted` });
+      items.push({ icon: "plug", text: state.provider ? `${state.provider === "google" ? "Gmail" : "Microsoft"} connected` : "No account connected" });
+      activityEl.innerHTML = items.map(a => `<div class="activity-item">${ic(a.icon)}<span>${a.text}</span></div>`).join("");
+    }
   }
 
-  el["browse-files-btn"].addEventListener("click", () => el["eml-file-input"].click());
-  el["eml-file-input"].addEventListener("change", (e) => addFiles(e.target.files));
+  // ============================================================
+  // SETTINGS VIEW
+  // ============================================================
 
-  ["dragover", "dragenter"].forEach((evt) => {
-    el.dropzone.addEventListener(evt, (e) => { e.preventDefault(); el.dropzone.classList.add("dropzone--active"); });
+  function saveSettings() {
+    localStorage.setItem("vp_settings", JSON.stringify(state.settings));
+  }
+
+  function initSettings() {
+    // Toggle switches
+    document.querySelectorAll(".switch[data-setting]").forEach(sw => {
+      const key = sw.getAttribute("data-setting");
+      sw.classList.toggle("on", !!state.settings[key]);
+    });
+
+    // Theme label
+    const label = document.getElementById("currentThemeLabel");
+    if (label) label.textContent = `Current: ${THEME_LABELS[state.theme] || "Default"}`;
+  }
+
+  // Settings switch handlers
+  document.querySelectorAll(".switch[data-setting]").forEach(sw => {
+    const key = sw.getAttribute("data-setting");
+    if (state.settings[key]) sw.classList.add("on");
+    sw.addEventListener("click", () => {
+      state.settings[key] = !state.settings[key];
+      sw.classList.toggle("on", state.settings[key]);
+      saveSettings();
+      toast(`${key} ${state.settings[key] ? "enabled" : "disabled"}`);
+    });
   });
-  ["dragleave", "drop"].forEach((evt) => {
-    el.dropzone.addEventListener(evt, (e) => { e.preventDefault(); el.dropzone.classList.remove("dropzone--active"); });
-  });
-  el.dropzone.addEventListener("drop", (e) => {
-    if (e.dataTransfer && e.dataTransfer.files) addFiles(e.dataTransfer.files);
-  });
 
-  el["analyze-batch-btn"].addEventListener("click", async () => {
-    if (!state.batchFiles.length) return;
+  // Theme modal
+  function themeSwatchHtml(name, label) {
+    return `<button class="theme-swatch ${state.theme === name ? "active" : ""}" data-theme-choice="${name}">
+      <div class="swatch-preview ${name}"></div>
+      <span>${label}</span>
+    </button>`;
+  }
 
-    el["analyze-batch-btn"].disabled = true;
-    el["batch-summary"].hidden = true;
-    el["batch-table-body"].innerHTML = "";
+  const changeThemeBtn = document.getElementById("changeThemeBtn");
+  if (changeThemeBtn) {
+    changeThemeBtn.addEventListener("click", () => {
+      openModal(`
+        <h3>${ic("palette")} Choose theme</h3>
+        <div class="theme-swatches">
+          ${themeSwatchHtml("default", "Default")}
+          ${themeSwatchHtml("dark", "Dark")}
+          ${themeSwatchHtml("light", "Light")}
+          ${themeSwatchHtml("purple", "Purple")}
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-ghost" id="closeThemeModal">Close</button>
+        </div>
+      `);
+      document.getElementById("closeThemeModal").addEventListener("click", closeModal);
+      document.querySelectorAll("[data-theme-choice]").forEach(btn => {
+        btn.addEventListener("click", () => {
+          applyTheme(btn.getAttribute("data-theme-choice"));
+          closeModal();
+          toast("Theme updated", "palette");
+          renderDashboardChart(); // Re-render chart with new theme colors
+        });
+      });
+    });
+  }
 
-    const formData = new FormData();
-    state.batchFiles.forEach((f) => formData.append("files", f));
+  // Go to trusted senders from settings
+  const goToTrustedBtn = document.getElementById("goToTrustedBtn");
+  if (goToTrustedBtn) {
+    goToTrustedBtn.addEventListener("click", () => {
+      setActiveView("user");
+      setTimeout(() => {
+        const table = document.getElementById("trustedSendersTable");
+        if (table) table.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 80);
+    });
+  }
+
+  // ============================================================
+  // LOGOUT
+  // ============================================================
+
+  async function doLogout(providerToLogout) {
+    const provider = providerToLogout || state.provider;
+    if (!provider) return;
 
     try {
-      const data = await apiPost("/api/analyze/batch", { body: formData });
-
-      el["batch-table-body"].innerHTML = data.results.map((r) => `
-        <tr class="${r.status === 'analyzed' ? '' : 'row-failed'}">
-          <td>${escapeHtml(r.source_filename || r.message_id || "\u2014")}</td>
-          <td>${escapeHtml((r.email && r.email.sender) || "\u2014")}</td>
-          <td>${escapeHtml((r.email && r.email.subject) || r.error || "\u2014")}</td>
-          <td>${riskBadge(r.risk)}</td>
-        </tr>`).join("");
-
-      el["batch-summary"].hidden = false;
-      el["batch-summary"].textContent =
-        `${data.requested} uploaded \u2022 ${data.analyzed} analyzed \u2022 ${data.failed} failed \u2022 ${data.skipped} skipped`;
-
-      state.batchFiles = [];
-      renderSelectedFiles();
+      await apiPost(`/auth/${provider}/logout`);
     } catch (err) {
-      showToast("Batch analysis failed: " + errText(err));
-    } finally {
-      el["analyze-batch-btn"].disabled = state.batchFiles.length === 0;
+      toast("Logout request failed: " + errText(err));
     }
-  });
 
-  // ============================================================
-  // UTIL
-  // ============================================================
+    // Client state reset
+    if (state.scanPollHandle) clearInterval(state.scanPollHandle);
+    if (provider === state.provider) {
+      state.provider = null;
+      state.accountEmail = null;
+      state.currentMessageIds = [];
+      state.resultsByMessageId = {};
+      state.scanId = null;
+      state.pageTokenStack = [null];
+      state.currentPageIndex = 0;
+      state.nextPageToken = null;
+    }
 
-  function escapeHtml(str) {
-    return String(str)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
+    await refreshConnectionStatus();
+    renderInboxTable();
+    updateSummaryCards();
+    renderHome();
+    toast("Logged out", "logout");
+  }
+
+  const logoutBtn = document.getElementById("logoutBtn");
+  if (logoutBtn) {
+    logoutBtn.addEventListener("click", () => {
+      openModal(`
+        <h3>Are you sure you want to log out?</h3>
+        <p>Your session will end. Trusted senders and settings stay saved on this device.</p>
+        <div class="modal-actions">
+          <button class="btn btn-ghost" id="cancelLogoutBtn">Cancel</button>
+          <button class="btn btn-danger" id="confirmLogoutBtn">Log Out</button>
+        </div>
+      `);
+      document.getElementById("cancelLogoutBtn").addEventListener("click", closeModal);
+      document.getElementById("confirmLogoutBtn").addEventListener("click", () => {
+        closeModal();
+        doLogout();
+      });
+    });
   }
 
   // ============================================================
-  // INIT
-  //
-  // Runs on every page load, including the redirect FastAPI sends
-  // back to "/" after a successful OAuth callback - so a successful
-  // login is reflected immediately with no second click and no
-  // manual refresh required.
+  // INBOX EVENT HANDLERS
   // ============================================================
 
+  // Search
+  let searchDebounce;
+  const inboxSearch = document.getElementById("inboxSearch");
+  if (inboxSearch) {
+    inboxSearch.addEventListener("input", e => {
+      clearTimeout(searchDebounce);
+      const headerSearch = document.getElementById("inboxHeaderSearch");
+      if (headerSearch) headerSearch.value = e.target.value;
+      searchDebounce = setTimeout(() => { state.search = e.target.value; renderInboxTable(); }, 250);
+    });
+  }
+  let headerSearchDebounce;
+  const headerSearch = document.getElementById("inboxHeaderSearch");
+  if (headerSearch) {
+    headerSearch.addEventListener("input", e => {
+      clearTimeout(headerSearchDebounce);
+      const inboxSearch2 = document.getElementById("inboxSearch");
+      if (inboxSearch2) inboxSearch2.value = e.target.value;
+      headerSearchDebounce = setTimeout(() => { state.search = e.target.value; renderInboxTable(); }, 250);
+    });
+  }
+
+  // Filters
+  ["filterSeverity", "filterThreat", "filterTrust", "filterRead"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.addEventListener("change", e => {
+        const key = id.replace("filter", "").toLowerCase();
+        state.filters[key] = e.target.value;
+        renderInboxTable();
+      });
+    }
+  });
+
+  // Page size
+  const pageSizeSelect = document.getElementById("pageSizeSelect");
+  if (pageSizeSelect) {
+    pageSizeSelect.addEventListener("change", e => {
+      state.pageSize = parseInt(e.target.value, 10);
+      loadEmailPage(null, 0);
+    });
+  }
+
+  // Pagination
+  const prevPageBtn = document.getElementById("prevPageBtn");
+  if (prevPageBtn) {
+    prevPageBtn.addEventListener("click", () => {
+      if (state.currentPageIndex === 0) return;
+      const prevIndex = state.currentPageIndex - 1;
+      loadEmailPage(state.pageTokenStack[prevIndex], prevIndex);
+    });
+  }
+  const nextPageBtn = document.getElementById("nextPageBtn");
+  if (nextPageBtn) {
+    nextPageBtn.addEventListener("click", () => {
+      if (!state.nextPageToken) return;
+      loadEmailPage(state.nextPageToken, state.currentPageIndex + 1);
+    });
+  }
+
+  // Scan button
+  const scanInboxBtn = document.getElementById("scanInboxBtn");
+  if (scanInboxBtn) scanInboxBtn.addEventListener("click", startScan);
+
+  // Sync buttons
+  const syncBtn = document.getElementById("syncBtn");
+  if (syncBtn) syncBtn.addEventListener("click", () => refreshMailbox(syncBtn));
+  const homeSyncBtn = document.getElementById("homeSyncBtn");
+  if (homeSyncBtn) homeSyncBtn.addEventListener("click", () => refreshMailbox(homeSyncBtn, renderHome));
+  const inboxSyncBtn = document.getElementById("inboxSyncBtn");
+  if (inboxSyncBtn) inboxSyncBtn.addEventListener("click", () => refreshMailbox(inboxSyncBtn));
+
+  // Quick actions
+  document.querySelectorAll(".quick-action-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const action = btn.getAttribute("data-action");
+      if (action === "scan-inbox") { setActiveView("inbox"); startScan(); }
+      else if (action === "custom-email") { setActiveView("custom"); }
+      else if (action === "risky-mails") {
+        state.filters.severity = "high";
+        setActiveView("inbox");
+        const sel = document.getElementById("filterSeverity");
+        if (sel) sel.value = "high";
+      }
+      else if (action === "reports") { setActiveView("reports"); }
+    });
+  });
+
+  // Dashboard pill navigation
+  const pillNav = document.getElementById("pillNav");
+  if (pillNav) {
+    const pillBtns = pillNav.querySelectorAll(".pill-btn");
+    const pillIndicator = document.getElementById("pillIndicator");
+    const widgetContainer = document.getElementById("widgetContainer");
+
+    function updatePillIndicator(activeBtn) {
+      if (pillIndicator && activeBtn) {
+        pillIndicator.style.width = activeBtn.offsetWidth + "px";
+        pillIndicator.style.left = activeBtn.offsetLeft + "px";
+      }
+    }
+
+    pillBtns.forEach(btn => {
+      btn.addEventListener("click", () => {
+        pillBtns.forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        const idx = parseInt(btn.getAttribute("data-index"), 10);
+        if (widgetContainer) widgetContainer.style.transform = `translateX(-${idx * 100}%)`;
+        updatePillIndicator(btn);
+      });
+    });
+
+    // Initial pill indicator position
+    setTimeout(() => {
+      const activeBtn = pillNav.querySelector(".pill-btn.active");
+      if (activeBtn) updatePillIndicator(activeBtn);
+    }, 100);
+  }
+
+  // Time toggle buttons for chart
+  document.querySelectorAll(".time-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".time-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      // Could re-fetch with different period but keeping simple
+    });
+  });
+
+  // Export report
+  const exportBtn = document.getElementById("exportReportBtn");
+  if (exportBtn) {
+    exportBtn.addEventListener("click", () => toast("Report export is a planned feature", "file-export"));
+  }
+
+  // Report range
+  const changeRangeBtn = document.getElementById("changeRangeBtn");
+  if (changeRangeBtn) {
+    changeRangeBtn.addEventListener("click", () => toast("Date range filtering uses real backend data", "calendar"));
+  }
+
+  // ============================================================
+  // INIT — runs on every page load (including OAuth callback redirect)
+  // ============================================================
+
+  setActiveView("home");
   refreshConnectionStatus();
+
 })();

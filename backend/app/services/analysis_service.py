@@ -24,6 +24,8 @@ from backend.app.services.geolocation import get_ip_geolocation
 from backend.app.services.m1_adapter import prepare_m1_input
 from backend.app.services.ml_classifier import build_analysis_text, classify_email
 from backend.app.services.risk_engine import calculate_risk
+from backend.app.spam import SpamAssassinResult, get_spamassassin_config
+from backend.app.spam import analyze_email as spamassassin_analyze_email
 from backend.app.threat_intel.aggregator import analyze_threat_intelligence
 
 logger = logging.getLogger("email_threat_platform.analysis")
@@ -62,6 +64,86 @@ def _header_analysis(email: NormalizedEmail) -> dict:
         "reply_to_mismatch": bool(reply_to and sender and reply_to != sender),
         "return_path_mismatch": bool(return_path and sender and return_path != sender),
     }
+
+
+def _build_raw_email_for_spamassassin(email: NormalizedEmail) -> bytes:
+    """Best-effort raw RFC822 content for the optional SpamAssassin stage.
+
+    Prefers an already-available raw source on the `NormalizedEmail`
+    (e.g. the .eml-upload path, which has the original bytes) via
+    `getattr` so this has no hard dependency on that attribute existing.
+    Falls back to reconstructing a minimal RFC822 message from the
+    fields already parsed elsewhere in the pipeline, so provider-fetched
+    (Gmail/Microsoft) messages still give the optional stage something
+    to analyze. This reconstruction is only used for this optional,
+    non-blocking evidence source - it is never used for M1/M2/M3/BEC,
+    and never raises (falls back to an empty payload on any error, which
+    the adapter itself already handles as an "empty input" result).
+    """
+    for attr in ("raw_source", "raw_bytes", "raw_mime", "raw_email"):
+        raw = getattr(email, attr, None)
+        if raw:
+            return raw.encode("utf-8", errors="replace") if isinstance(raw, str) else raw
+
+    try:
+        from email.message import EmailMessage
+
+        msg = EmailMessage()
+        msg["From"] = email.sender or ""
+        msg["To"] = email.recipient or ""
+        msg["Subject"] = email.subject or ""
+        if email.date:
+            msg["Date"] = email.date
+        if email.reply_to:
+            msg["Reply-To"] = email.reply_to
+        if email.return_path:
+            msg["Return-Path"] = email.return_path
+        msg.set_content(email.body or email.html_body or "")
+        return msg.as_bytes()
+    except Exception:  # noqa: BLE001 - reconstruction must never break the pipeline
+        return b""
+
+
+def _run_spamassassin_stage(email: NormalizedEmail) -> dict | None:
+    """Optional SpamAssassin analysis stage - spam-oriented evidence only.
+
+    Fully gated behind `SPAMASSASSIN_ENABLED` (default: disabled). When
+    disabled, this returns `None` immediately without invoking
+    SpamAssassin or, transitively, Docker at all - so a fresh checkout
+    with no SpamAssassin executable/container available still starts
+    and analyzes email normally.
+
+    When enabled, the existing, already-tested adapter
+    (`backend.app.spam.analyze_email`) is invoked and its structured
+    `SpamAssassinResult` is returned as-is (as a dict) - including when
+    `available=False` or `error` is populated, since the adapter itself
+    already reports every expected failure mode (missing executable,
+    Docker not running, timeout, non-zero exit, unparsable output)
+    through the result rather than raising. The `try/except` here is
+    defense-in-depth against an unforeseen bug in the integration glue
+    itself (e.g. building the raw email) - a SpamAssassin failure must
+    never fail the overall email analysis.
+
+    This is spam-oriented evidence, never a phishing/malware/BEC/threat-
+    intel verdict, and is not (yet) consumed by `calculate_risk()` - see
+    risk_engine.py; wiring it into risk scoring is a separate, deliberate
+    follow-up.
+    """
+    config = get_spamassassin_config()
+    if not config.enabled:
+        return None
+
+    try:
+        raw_email = _build_raw_email_for_spamassassin(email)
+        result = spamassassin_analyze_email(raw_email, config=config)
+    except Exception as exc:  # noqa: BLE001 - intentional catch-all boundary
+        logger.exception("Unexpected error running the optional SpamAssassin stage")
+        result = SpamAssassinResult(
+            available=False,
+            error=f"unexpected spamassassin integration error: {exc}",
+        )
+
+    return result.model_dump()
 
 
 def analyze_normalized_email(email: NormalizedEmail) -> dict:
@@ -107,6 +189,17 @@ def analyze_normalized_email(email: NormalizedEmail) -> dict:
     bec_result = detect_bec(analysis_text)
     timer.mark("bec")
 
+    # ---------------- Optional: SpamAssassin (spam-oriented evidence) ----------------
+    # Fully gated behind SPAMASSASSIN_ENABLED (default: disabled) - see
+    # _run_spamassassin_stage. Independent of, and never converted into,
+    # a phishing/malware/BEC/threat-intel verdict. Fed into
+    # calculate_risk() below as a small, optional, capped supporting
+    # signal (see risk_engine.py's RISK_CONFIG["spamassassin"]) - a
+    # disabled/unavailable/errored/None-score result contributes zero
+    # risk and leaves the rest of the engine's behavior unchanged.
+    spamassassin_result = _run_spamassassin_stage(email)
+    timer.mark("spamassassin")
+
     # ---------------- M4: geolocation / infrastructure ----------------
     # Deferred for background enrichment so slow external lookups
     # cannot block the primary threat-analysis path.
@@ -121,6 +214,7 @@ def analyze_normalized_email(email: NormalizedEmail) -> dict:
         header_analysis=header_analysis,
         attachment_analysis=attachment_result,
         bec_analysis=bec_result,
+        spamassassin=spamassassin_result,
     )
     timer.mark("risk")
     timer.log(email.message_id)
@@ -134,6 +228,8 @@ def analyze_normalized_email(email: NormalizedEmail) -> dict:
         evidence_sources.append("local_heuristics")
     if bec_result.get("categories"):
         evidence_sources.append("deterministic_bec_detector")
+    if spamassassin_result and spamassassin_result.get("available"):
+        evidence_sources.append("spamassassin")
     if geo_results:
         evidence_sources.append("ip_geolocation")
     if attachment_result["scanned"] and any(i["yara"]["scanned"] for i in attachment_result["items"]):
@@ -187,6 +283,7 @@ def analyze_normalized_email(email: NormalizedEmail) -> dict:
         "m2": m2_result,
         "m3": m3_result,
         "m4": geo_results,
+        "spamassassin": spamassassin_result,
         "geo_status": "pending" if m1_result.get("origin_ip") else "not_applicable",
         "urls": email.urls,
         "attachments_present": bool(email.attachments),

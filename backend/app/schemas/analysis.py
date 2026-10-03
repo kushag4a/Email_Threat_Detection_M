@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 
 from backend.app.schemas.m1 import M1Output
 from backend.app.schemas.threat_intel import ThreatIntelligenceResult
+from backend.app.spam import SpamAssassinResult
 
 
 class EmailSummary(BaseModel):
@@ -74,6 +75,15 @@ class AnalysisResult(BaseModel):
     m2: M2Result | None = None
     m3: ThreatIntelligenceResult | None = None
     m4: list[GeoResult] = Field(default_factory=list)
+
+    # Optional spam-oriented evidence from the SpamAssassin adapter
+    # (backend.app.spam). Populated only when SPAMASSASSIN_ENABLED is
+    # set; `None` when the stage is disabled. This is a distinct signal
+    # from `m2` (phishing probability) - it is never converted into a
+    # phishing/malware/BEC/threat-intel verdict here, and does not (yet)
+    # feed into `risk`. Reuses the adapter's own stable result contract
+    # rather than duplicating its fields into a new schema.
+    spamassassin: SpamAssassinResult | None = None
 
     urls: list[str] = Field(default_factory=list)
     attachments: list[AttachmentInfo] = Field(default_factory=list)
