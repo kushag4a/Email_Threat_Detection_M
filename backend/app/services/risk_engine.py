@@ -83,6 +83,20 @@ Risk levels:
   60-79  HIGH
   80-100 CRITICAL
 --------------------------------------------------------------------
+SpamAssassin (optional, supporting signal only - see RISK_CONFIG["spamassassin"]):
+  SpamAssassin score above its own reported threshold (falling back to
+  RISK_CONFIG["spamassassin"]["default_score_threshold"] when the
+  adapter did not report one) -> (score - threshold) * score_multiplier,
+  capped at max_contribution (recommended/default: 5 points total).
+  Zero contribution whenever the stage is disabled (either via this
+  engine's own RISK_CONFIG["spamassassin"]["enabled"] flag or because
+  the adapter itself is disabled/unavailable/errored/timed out), or
+  the reported score is None. SpamAssassin NEVER creates a floor or a
+  hard override, and never independently reaches HIGH/CRITICAL - see
+  RISK_CONFIG["spamassassin"] and the "SpamAssassin" section of
+  calculate_risk() below. is_spam=True (only) adds the "Spam"
+  threat_type - never phishing/malware/BEC.
+--------------------------------------------------------------------
 HARDENING (2026): deterministic evidence cannot be neutralized
 --------------------------------------------------------------------
 Per the final risk-hardening review, ML classifies email CONTENT, but
@@ -144,7 +158,7 @@ from __future__ import annotations
 
 import copy
 
-RISK_CONFIG_VERSION = "1.1.0"
+RISK_CONFIG_VERSION = "1.2.0"
 
 # ---------------------------------------------------------------------------
 # Single source of truth for every weight/multiplier, cap, floor, and
@@ -335,6 +349,43 @@ RISK_CONFIG: dict = {
         "high_max": 79,
         "critical_min": 80,
     },
+    # ------------------------------------------------------------------
+    # SpamAssassin - a SMALL, OPTIONAL, CONFIGURABLE supporting signal
+    # (see backend/app/spam and the module docstring above). This is
+    # spam-oriented evidence only - it is never treated as a phishing,
+    # malware, BEC, or threat-intel verdict, never creates a floor or
+    # a hard override, and can never by itself push a message into
+    # HIGH/CRITICAL (see the "SpamAssassin" section of calculate_risk()).
+    # Deterministic security evidence (YARA, threat-intel, BEC) always
+    # keeps its existing priority: SpamAssassin's contribution is
+    # additive only, capped low, and applied before floors/overrides so
+    # it can never dilute or suppress them either.
+    # ------------------------------------------------------------------
+    "spamassassin": {
+        # Engine-level toggle for whether SpamAssassin evidence is
+        # allowed to affect the risk SCORE at all. This is independent
+        # of, and in addition to, the adapter's own SPAMASSASSIN_ENABLED
+        # environment flag (backend/app/spam/config.py), which controls
+        # whether the adapter runs at all. Turning this off still lets
+        # the raw SpamAssassin result be surfaced elsewhere (e.g. the
+        # `spamassassin` field on AnalysisResult) without it influencing
+        # the score.
+        "enabled": True,
+        # Fallback spam-score threshold used only when a given message's
+        # SpamAssassin result did not report its own `threshold`
+        # (SpamAssassin's `required=` value). When the adapter DID
+        # report a threshold, that per-message value is used instead -
+        # see calculate_risk().
+        "default_score_threshold": 5.0,
+        # Points of risk contribution per point of SpamAssassin score
+        # above the (per-message or default) threshold.
+        "score_multiplier": 1.0,
+        # Hard cap on SpamAssassin's total contribution to the risk
+        # score, regardless of how far above threshold the score is.
+        # RECOMMENDED DEFAULT: 5 - small enough that SpamAssassin alone
+        # can never move a message between severity levels on its own.
+        "max_contribution": 5,
+    },
 }
 
 # Categories from bec_detector.py that represent an actual
@@ -376,6 +427,7 @@ def calculate_risk(
     header_analysis: dict,
     attachment_analysis: dict,
     bec_analysis: dict | None = None,
+    spamassassin: dict | None = None,
     config: dict | None = None,
 ) -> dict:
     cfg = _cfg(config)
@@ -384,6 +436,7 @@ def calculate_risk(
     floors = cfg["floors"]
     overrides_cfg = cfg.get("overrides", {})
     thresholds = cfg["thresholds"]
+    spamassassin_cfg = cfg.get("spamassassin", {})
 
     score = 0.0
     reasons: list[str] = []
@@ -846,6 +899,73 @@ def calculate_risk(
                 threat_types.add("Malware Attachment")
         contributing_modules.append("attachments")
 
+    # ---------------- SpamAssassin (optional supporting signal) ----------------
+    # Spam-oriented evidence only - never a phishing/malware/BEC/threat-
+    # intel verdict. Contributes ZERO when disabled (this engine's own
+    # spamassassin.enabled flag), when no result was supplied, when the
+    # adapter reports unavailable/errored, or when no numeric score is
+    # present (covers disabled/unavailable/failed/timeout/None-score per
+    # the adapter's own result contract - see result_schema.py). Never
+    # creates a floor or hard override and is capped low (see
+    # RISK_CONFIG["spamassassin"]["max_contribution"]) so it can never,
+    # by itself, move a message between severity levels.
+    score_before_spamassassin = score
+    spamassassin_contribution = 0.0
+    sa_result = spamassassin or {}
+    sa_usable = bool(
+        spamassassin_cfg.get("enabled", True)
+        and sa_result
+        and sa_result.get("available")
+        and not sa_result.get("error")
+    )
+    if sa_usable:
+        contributing_modules.append("SpamAssassin")
+        sa_score = sa_result.get("score")
+        if sa_score is not None:
+            sa_score = float(sa_score)
+            sa_threshold = sa_result.get("threshold")
+            sa_threshold = (
+                float(sa_threshold)
+                if sa_threshold is not None
+                else float(spamassassin_cfg.get("default_score_threshold", 5.0))
+            )
+            multiplier = spamassassin_cfg.get("score_multiplier", 1.0)
+            cap = spamassassin_cfg.get("max_contribution", 5)
+            raw_excess = max(0.0, sa_score - sa_threshold)
+            raw_contribution = raw_excess * multiplier
+            spamassassin_contribution = min(raw_contribution, cap)
+            # Recorded unconditionally (even when the contribution is
+            # zero, e.g. a below-threshold score) so the calculation
+            # breakdown always shows this signal ran and what it found -
+            # deliberately not treated as "zero-value noise" like the
+            # other sections above, since this is spam-oriented evidence
+            # the explanation/evidence contract must surface either way.
+            score += _add(
+                "SpamAssassin spam score",
+                sa_score,
+                multiplier,
+                spamassassin_contribution,
+                threshold=sa_threshold,
+                matched_rules=sa_result.get("matched_rules", []),
+                is_spam=sa_result.get("is_spam"),
+                engine="spamassassin",
+            )
+            if raw_contribution > cap:
+                caps_applied.append({
+                    "cap": "spamassassin_max", "limit": cap,
+                    "raw_value": round(raw_contribution, 4), "clamped_value": spamassassin_contribution,
+                })
+            if spamassassin_contribution > 0:
+                reasons.append(
+                    f"SpamAssassin flagged spam-like indicators (score {sa_score:.1f}, "
+                    f"threshold {sa_threshold:.1f})"
+                )
+        # Only SpamAssassin's own explicit is_spam=True verdict adds the
+        # "Spam" threat type - never inferred as phishing/malware/BEC,
+        # and never derived from the numeric score alone.
+        if sa_result.get("is_spam") is True:
+            threat_types.add("Spam")
+
     raw_score = score
     score_before_floors = max(0, min(round(score), 100))
     score = score_before_floors
@@ -986,6 +1106,8 @@ def calculate_risk(
 
     calculation = {
         "raw_score": round(raw_score, 4),
+        "score_before_spamassassin": round(score_before_spamassassin, 4),
+        "spamassassin_contribution": round(spamassassin_contribution, 4),
         "score_before_floors": score_before_floors,
         "final_score": score,
         "items": calc_items,

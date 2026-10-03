@@ -32,6 +32,7 @@ Provider-independent email security research platform combining machine learning
 - [Testing](#-testing)
 - [Project Structure](#-project-structure)
 - [Known Limitations](#-known-limitations)
+- [Future Voluntary Threat Reporting](#-future-voluntary-threat-reporting)
 - [Roadmap](#-roadmap)
 - [Documentation](#-documentation)
 - [Project Status](#-project-status)
@@ -82,7 +83,7 @@ Detection is split into independent detectors that all feed the same risk engine
 ```mermaid
 flowchart TD
     EMAIL["📧 Email"] --> P["🧠 Phishing / Credential Theft<br/>Production V2"]
-    EMAIL --> S["🚧 Spam Model<br/>(in development)"]
+    EMAIL --> S["📨 SpamAssassin<br/>(optional supporting signal)"]
     EMAIL --> D["🔒 Deterministic Security<br/>Header/Auth · Attachments · YARA · Threat Intel · BEC"]
     P --> R["📊 Risk Engine"]
     S --> R
@@ -90,7 +91,7 @@ flowchart TD
     R --> X["✅ Explainable Result"]
 ```
 
-The design intentionally keeps **phishing ≠ spam ≠ malware ≠ BEC** as separate signals rather than forcing every threat type through one classifier. The spam model is under active development and is not yet part of the production risk score.
+The design intentionally keeps **phishing ≠ spam ≠ malware ≠ BEC** as separate signals rather than forcing every threat type through one classifier. SpamAssassin is implemented and optional — a supporting spam signal, not the primary phishing classifier — and is integrated into the risk calculation as an optional supporting contribution rather than a phishing verdict by itself.
 
 ---
 
@@ -99,7 +100,7 @@ The design intentionally keeps **phishing ≠ spam ≠ malware ≠ BEC** as sepa
 Earlier versions of the phishing classifier only understood English, so non-English email had no reliable coverage. The current pipeline handles Indic-language email two ways:
 
 - **Path A — Direct:** the production V2 model has been retrained on a multilingual synthetic dataset covering 11 Indic languages, so it can classify Indic-language email directly, without translation.
-- **Path B — Translate, then classify:** the email is translated to English with **NLLB-200 (distilled, 600M)** and then run through the same V2 model, so the result can be compared against Path A.
+- **Path B — Translate, then classify:** the email is translated to English with **NLLB-200 (distilled, 600M)** and then run through the same V2 model, so the result can be compared against Path A. Path B is a prototype/evaluation path used for benchmarking and remains isolated from the production V2 decision path, which relies on Path A.
 
 ```mermaid
 flowchart LR
@@ -155,7 +156,7 @@ Results are written to `datasets/evaluation/indic/results/`.
 
 ## 🧠 Production ML Model
 
-The production phishing classifier is **V2** (`backend/app/models/v2/`): TF-IDF text features (1–2 grams, 50,000 max features) with a calibrated linear classifier (LinearSVC + CalibratedClassifierCV). On its evaluation set, V2 currently reaches **99.3% accuracy** — a separate figure from the Indic multilingual benchmark above, which uses a smaller synthetic dataset built specifically to compare the direct vs. translate-then-classify paths.
+The production phishing classifier is **V2** (`backend/app/models/v2/`): TF-IDF text features (1–2 grams, 50,000 max features) with a calibrated linear classifier (LinearSVC + CalibratedClassifierCV). On its test set, V2 reaches **98.95% accuracy** (98.79% precision, 98.93% recall, 98.86% F1, 99.92% ROC-AUC) — a separate figure from the Indic multilingual benchmark above, which uses a smaller synthetic dataset built specifically to compare the direct vs. translate-then-classify paths.
 
 **V2.1** was evaluated as an experimental hard-mining variant and was **not promoted** to production.
 
@@ -165,6 +166,8 @@ The application does not retrain or silently replace the production model during
 
 ## 🔐 Security & Privacy Design
 
+- **Local-first:** ValorProtects is local-first — heavy email analysis (parsing, classification, risk scoring) runs on the user's own computer, and email content is processed locally. The current FastAPI/browser interface is the MVP implementation, not the final architectural identity of the product; a future remote service would be minimal and primarily support authentication/login/session handoff. Gmail/Microsoft mailbox access still requires internet/API access.
+- Analysis results, scan cache, and account metadata are stored **locally in SQLite** — the local-first design reduces unnecessary central storage of email content. Privacy is a core architectural principle.
 - OAuth tokens stay server-side; they are never exposed to frontend JavaScript.
 - OAuth callback `state` is verified for CSRF protection.
 - Cached/scanned mailbox data is scoped to the authenticated session, provider, account, and message — there's no global "current mailbox."
@@ -222,7 +225,7 @@ Open **http://localhost:8000** — you can use `.eml` upload mode without config
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 
-The current suite has **481 tests passing**. Focused suites include:
+The current suite has **481 passed, 39 warnings**. Focused suites include:
 
 ```bash
 .\.venv\Scripts\python.exe -m pytest tests/test_risk_engine_config.py -q
@@ -256,11 +259,11 @@ For full contracts and rationale, see [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md), 
 
 ## ⚠️ Known Limitations
 
-- **In-memory storage only** — sessions, tokens, and scan results live in process memory; restarting the server clears everything.
+- **Local SQLite storage** — analysis results, scan cache, and account metadata are persisted locally in SQLite; sessions/tokens remain server-side in the local process.
 - **OAuth needs real credentials** — without them, Google/Microsoft login return a clear 503; `.eml` upload works with zero setup.
 - **Indic benchmark data is synthetic** and not yet native-speaker reviewed.
 - **NLLB's first inference** in a process includes model-loading cost, so median/p95 latency is more informative than a short-run mean.
-- **Spam model is still in development** and not part of the production risk score yet.
+- **SpamAssassin is optional and supporting** — a supporting spam signal in the risk calculation, not the primary phishing classifier and not a phishing verdict by itself.
 - `scikit-learn` may emit an artifact-version warning when loading models trained under a slightly different patch version — this doesn't by itself mean loading failed.
 - **Microsoft provider** follows the documented Graph v1.0 contract but hasn't been exercised against a real tenant yet.
 
@@ -268,9 +271,23 @@ See [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) for the complete list.
 
 ---
 
+## 📮 Future Voluntary Threat Reporting
+
+Planned as a **future, optional, user-controlled, consent-based** feature — never automatic:
+
+1. A **HIGH/CRITICAL** result gives the user the option to report it.
+2. The user sees exactly what will be shared before anything is sent.
+3. Reporting requires explicit consent.
+4. The report goes to an authorized reporting destination.
+5. The user receives confirmation.
+
+Possible future destinations include a cybercrime department, a relevant ministry, the SIH host/organizer, or another authorized organization.
+
+---
+
 ## 🔭 Roadmap
 
-- [ ] Ship the spam-detection model as a first-class signal alongside phishing and deterministic security.
+- [ ] Voluntary threat reporting to an authorized destination (future, optional, consent-based — see [Future Voluntary Threat Reporting](#-future-voluntary-threat-reporting)).
 - [ ] Expand Indic-language evaluation to real, native-reviewed data.
 - [ ] Evidence-based risk calibration once new signals have been evaluated.
 - [ ] Full analyst dashboard drill-down for every risk contribution.
