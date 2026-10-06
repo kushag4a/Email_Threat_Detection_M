@@ -137,6 +137,13 @@
     accountEmail: null,
     googleStatus: { connected: false, email: null },
     microsoftStatus: { connected: false, email: null },
+    // Which OAuth providers this server has credentials for (from /auth/status).
+    // null = unknown yet; the UI then treats the provider as available.
+    providersConfigured: { google: null, microsoft: null },
+
+    // "booting" -> "welcome" (first launch, nothing chosen) | "anonymous" | "connected"
+    authPhase: "booting",
+    activeView: "home",
 
     // Pagination (real backend token-based)
     pageSize: 20,
@@ -172,8 +179,10 @@
     refreshing: false,
     scanning: false,
 
-    // Dashboard data cache
+    // Dashboard data (real backend data only)
     dashboardData: null,
+    chartPeriod: "daily",     // daily | weekly | monthly -> day | week | month
+    threatData: null,         // /api/dashboard/threat-vectors payload
   };
 
   // Apply persisted theme
@@ -186,9 +195,27 @@
   const navItems = document.querySelectorAll(".nav-links li[data-view]");
   const views = document.querySelectorAll(".view");
 
+  // Views that need a connected mailbox. In anonymous mode they are
+  // disabled in the sidebar and guarded here, so no code path (quick
+  // action, deep link from a card, keyboard) can land on them.
+  const MAILBOX_VIEWS = new Set(["inbox", "dashboard", "reports"]);
+  const VIEW_LABELS = { inbox: "Inbox", dashboard: "Dashboard", reports: "Reports" };
+
   function setActiveView(name) {
+    if (MAILBOX_VIEWS.has(name) && !state.provider) {
+      toast(`Sign in or connect a mailbox to use ${VIEW_LABELS[name] || name}.`, "plug");
+      return false;
+    }
+    state.activeView = name;
     views.forEach(v => v.classList.toggle("active", v.id === "view-" + name));
     navItems.forEach(li => li.classList.toggle("active", li.getAttribute("data-view") === name));
+    renderActiveView();
+    if (name === "dashboard") requestAnimationFrame(() => updatePillIndicator());
+    return true;
+  }
+
+  function renderActiveView() {
+    const name = state.activeView;
     if (name === "home") renderHome();
     if (name === "inbox") renderInbox();
     if (name === "dashboard") renderDashboard();
@@ -199,7 +226,13 @@
   }
 
   navItems.forEach(li => {
-    li.addEventListener("click", () => setActiveView(li.getAttribute("data-view")));
+    li.addEventListener("click", () => {
+      if (li.classList.contains("disabled")) {
+        setActiveView(li.getAttribute("data-view")); // shows the explanatory toast
+        return;
+      }
+      setActiveView(li.getAttribute("data-view"));
+    });
   });
 
   // Sidebar collapse
@@ -213,52 +246,236 @@
 
   // ============================================================
   // CONNECTION STATUS / LIFECYCLE
+  //
+  // BUG FIX ("must log in twice"): the old startup rendered Home from
+  // `state.provider === null`, THEN fired the status requests without
+  // awaiting them, and when the answers arrived it updated only the
+  // sidebar and the inbox table - never Home/Dashboard. So after a
+  // successful OAuth round trip the sidebar said "Gmail ..." while Home
+  // still said "No mailbox connected", and the user logged in again.
+  // Now: bootstrap() waits for the real status ONCE, decides the auth
+  // phase, and renders exactly once with the right state. Any later
+  // status change goes through the same applyAuthPhase() +
+  // renderActiveView() path.
   // ============================================================
 
+  const AUTH_CHOICE_KEY = "vp_auth_choice"; // sessionStorage: "skipped" = anonymous this launch
+  const DEFAULT_AVATAR = "/assets/default-avatar.svg";
+  const PROVIDER_LABELS = { google: "Gmail", microsoft: "Microsoft" };
+
+  function readAuthChoice() {
+    try { return sessionStorage.getItem(AUTH_CHOICE_KEY); } catch (_) { return null; }
+  }
+  function writeAuthChoice(value) {
+    try {
+      if (value) sessionStorage.setItem(AUTH_CHOICE_KEY, value);
+      else sessionStorage.removeItem(AUTH_CHOICE_KEY);
+    } catch (_) { /* storage unavailable: choice just isn't remembered */ }
+  }
+
+  async function fetchAuthStatus() {
+    // Preferred: one combined request (also reports which providers are configured).
+    try {
+      const data = await apiGet("/auth/status");
+      return {
+        google: Object.assign({ connected: false, email: null }, data.google),
+        microsoft: Object.assign({ connected: false, email: null }, data.microsoft),
+      };
+    } catch (_) {
+      // Older server / transient error: fall back to the per-provider endpoints.
+      const [g, m] = await Promise.all([
+        apiGet("/auth/google/status").catch(() => ({ connected: false })),
+        apiGet("/auth/microsoft/status").catch(() => ({ connected: false })),
+      ]);
+      return { google: g, microsoft: m };
+    }
+  }
+
   async function refreshConnectionStatus() {
-    const [googleStatus, msStatus] = await Promise.all([
-      apiGet("/auth/google/status").catch(() => ({ connected: false })),
-      apiGet("/auth/microsoft/status").catch(() => ({ connected: false })),
-    ]);
+    const { google, microsoft } = await fetchAuthStatus();
 
-    state.googleStatus = googleStatus;
-    state.microsoftStatus = msStatus;
+    state.googleStatus = google;
+    state.microsoftStatus = microsoft;
+    if (typeof google.configured === "boolean") state.providersConfigured.google = google.configured;
+    if (typeof microsoft.configured === "boolean") state.providersConfigured.microsoft = microsoft.configured;
 
-    if (googleStatus.connected) {
+    if (google.connected) {
       state.provider = "google";
-      state.accountEmail = googleStatus.email;
-    } else if (msStatus.connected) {
+      state.accountEmail = google.email;
+    } else if (microsoft.connected) {
       state.provider = "microsoft";
-      state.accountEmail = msStatus.email;
+      state.accountEmail = microsoft.email;
     } else {
       state.provider = null;
       state.accountEmail = null;
     }
+    return state.provider;
+  }
+
+  function computeAuthPhase() {
+    if (state.provider) return "connected";
+    return readAuthChoice() === "skipped" ? "anonymous" : "welcome";
+  }
+
+  // Single place that makes the shell reflect the auth phase.
+  function applyAuthPhase() {
+    state.authPhase = computeAuthPhase();
+    const phase = state.authPhase;
+    const connected = phase === "connected";
+    document.documentElement.setAttribute("data-auth", phase);
+
+    // Welcome / authentication landing
+    const welcome = document.getElementById("welcomeOverlay");
+    if (welcome) welcome.hidden = phase !== "welcome";
+
+    // Sidebar: Log Out only when authenticated, Sign in / Connect only when not
+    const logout = document.getElementById("logoutBtn");
+    const signIn = document.getElementById("signInBtn");
+    if (logout) logout.hidden = !connected;
+    if (signIn) signIn.hidden = connected;
+
+    // Mailbox-dependent navigation
+    navItems.forEach(li => {
+      if (li.getAttribute("data-requires-mailbox") !== "true") return;
+      li.classList.toggle("disabled", !connected);
+      li.setAttribute("aria-disabled", connected ? "false" : "true");
+      li.title = connected ? "" : "Sign in or connect a mailbox to use this";
+    });
+
+    // Mailbox actions
+    ["syncBtn", "homeSyncBtn", "inboxSyncBtn", "scanInboxBtn"].forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (id === "scanInboxBtn" && state.scanning) return; // scan lifecycle owns this one
+      el.disabled = !connected;
+      el.title = connected ? (id === "scanInboxBtn" ? "" : "Sync mailbox") : "Connect a mailbox first";
+    });
+    document.querySelectorAll('.quick-action-btn[data-action="scan-inbox"], .quick-action-btn[data-action="risky-mails"], .quick-action-btn[data-action="reports"]')
+      .forEach(btn => {
+        btn.disabled = !connected;
+        btn.title = connected ? "" : "Connect a mailbox first";
+      });
 
     updateUserProfileShortcut();
-
-    if (state.provider) {
-      loadEmailPage(null, 0);
-    }
+    renderRefreshLabels();
   }
 
   function updateUserProfileShortcut() {
-    const el = document.getElementById("userProfileShortcut");
-    if (!el) return;
+    const img = document.getElementById("userAvatar");
+    const nameEl = document.getElementById("userProfileName");
+    const subEl = document.getElementById("userProfileSub");
+    if (!img || !nameEl || !subEl) return;
+
+    img.onerror = () => { img.onerror = null; img.src = DEFAULT_AVATAR; };
     if (state.provider && state.accountEmail) {
-      const providerName = state.provider === "google" ? "Gmail" : "Microsoft";
-      el.innerHTML = `
-        <img id="userAvatar" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='8' r='4' fill='%2368D391'/%3E%3Cpath d='M4 20c0-4 3.5-6 8-6s8 2 8 6' fill='%2368D391'/%3E%3C/svg%3E" alt="User">
-        <div class="user-info">
-          <strong>${escapeHtml(providerName)}</strong>
-          <span>${escapeHtml(state.accountEmail)}</span>
-        </div>`;
+      // Provider profile imagery is used when the status payload carries a
+      // `picture`; otherwise (and on load failure) the default avatar.
+      const status = state.provider === "google" ? state.googleStatus : state.microsoftStatus;
+      img.src = (status && status.picture) || DEFAULT_AVATAR;
+      nameEl.textContent = PROVIDER_LABELS[state.provider] || state.provider;
+      subEl.textContent = state.accountEmail;
+      subEl.title = state.accountEmail;
     } else {
-      el.innerHTML = `
-        <div class="user-info">
-          <strong>Not connected</strong>
-          <span>Connect a mailbox</span>
-        </div>`;
+      img.src = DEFAULT_AVATAR;
+      nameEl.textContent = "Not connected";
+      subEl.textContent = "Anonymous mode";
+      subEl.title = "";
+    }
+  }
+
+  // ---------- sign-in UI (shared by the welcome screen and the connect modal)
+
+  const GOOGLE_SVG = '<svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>';
+  const MICROSOFT_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="1" y="1" width="10" height="10" fill="#F25022"/><rect x="13" y="1" width="10" height="10" fill="#7FBA00"/><rect x="1" y="13" width="10" height="10" fill="#00A4EF"/><rect x="13" y="13" width="10" height="10" fill="#FFB900"/></svg>';
+
+  function providerButtonsHtml() {
+    return ["google", "microsoft"].map(id => {
+      const label = id === "google" ? "Continue with Google" : "Continue with Microsoft";
+      const unavailable = state.providersConfigured[id] === false;
+      return `<button type="button" class="provider-btn" data-oauth="${id}"${unavailable ? ' disabled title="Not configured on this server (see .env.example)"' : ""}>
+        ${id === "google" ? GOOGLE_SVG : MICROSOFT_SVG}
+        <span>${label}${unavailable ? ' <span class="provider-sub">· not configured</span>' : ""}</span>
+      </button>`;
+    }).join("");
+  }
+
+  function startOAuth(providerId) {
+    if (state.providersConfigured[providerId] === false) {
+      toast(`${PROVIDER_LABELS[providerId]} sign-in is not configured on this server.`, "warning");
+      return;
+    }
+    // Full-page redirect to the existing OAuth login route. Buttons are
+    // disabled so a second click can't start a second, competing flow.
+    document.querySelectorAll("[data-oauth]").forEach(b => { b.disabled = true; });
+    window.location.href = `/auth/${providerId}/login`;
+  }
+
+  function bindProviderButtons(root) {
+    root.querySelectorAll("[data-oauth]").forEach(btn => {
+      btn.addEventListener("click", () => startOAuth(btn.getAttribute("data-oauth")));
+    });
+  }
+
+  function renderWelcome() {
+    const box = document.getElementById("welcomeProviderButtons");
+    if (!box) return;
+    box.innerHTML = providerButtonsHtml();
+    bindProviderButtons(box);
+  }
+
+  function openConnectModal() {
+    openModal(`
+      <h3>${ic("plug")} Sign in / Connect</h3>
+      <p>Connect a mailbox with read-only OAuth to scan your inbox and unlock the Dashboard and Reports.</p>
+      <div class="welcome-actions">${providerButtonsHtml()}</div>
+      <div class="modal-actions"><button class="btn btn-ghost" id="closeConnectModal">Not now</button></div>
+    `);
+    bindProviderButtons(document.getElementById("modalBox"));
+    document.getElementById("closeConnectModal").addEventListener("click", closeModal);
+  }
+
+  function skipForNow() {
+    writeAuthChoice("skipped");
+    state.activeView = "home";
+    applyAuthPhase();
+    setActiveView("home");
+  }
+
+  (function wireAuthUi() {
+    const skipBtn = document.getElementById("welcomeSkipBtn");
+    if (skipBtn) skipBtn.addEventListener("click", skipForNow);
+    const signIn = document.getElementById("signInBtn");
+    if (signIn) signIn.addEventListener("click", openConnectModal);
+    const profile = document.getElementById("userProfileShortcut");
+    if (profile) {
+      profile.addEventListener("click", () => {
+        if (state.provider) setActiveView("user");
+        else openConnectModal();
+      });
+    }
+  })();
+
+  // Browser Back from the provider's consent screen can restore this page
+  // from the back/forward cache with the OAuth buttons still disabled.
+  // Reload so state and buttons are rebuilt from the real session.
+  window.addEventListener("pageshow", e => { if (e.persisted) window.location.reload(); });
+
+  // Everything the first render needs, in order, exactly once.
+  async function bootstrap() {
+    try {
+      await refreshConnectionStatus();
+    } catch (_) { /* treated as not connected; welcome screen is shown */ }
+
+    renderWelcome();
+    applyAuthPhase();
+    setActiveView("home");
+    document.documentElement.classList.remove("vp-booting");
+
+    // Mailbox contents load AFTER the shell is correct, then the visible
+    // view is re-rendered with the real data.
+    if (state.provider) {
+      await loadEmailPage(null, 0);
+      renderActiveView();
     }
   }
 
@@ -278,6 +495,7 @@
       if (triggerBtn) triggerBtn.classList.remove("syncing");
       state.refreshing = false;
       toast("Mailbox refreshed");
+      renderActiveView();
       if (onDone) onDone();
     }).catch(err => {
       if (triggerBtn) triggerBtn.classList.remove("syncing");
@@ -486,6 +704,18 @@
   // SCANNING (real backend)
   // ============================================================
 
+  function paintScanProgress(done, total, detailText) {
+    const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+    const fill = document.getElementById("scanProgressFill");
+    const text = document.getElementById("scanProgressText");
+    const pctEl = document.getElementById("scanProgressPct");
+    const detail = document.getElementById("scanProgressDetail");
+    if (fill) fill.style.width = pct + "%";
+    if (text) text.textContent = `Scanning ${done} / ${total}`;
+    if (pctEl) pctEl.textContent = pct + "%";
+    if (detail) detail.textContent = detailText;
+  }
+
   async function startScan() {
     if (!state.provider || state.scanning) return;
     if (!state.currentMessageIds.length) {
@@ -496,15 +726,11 @@
     state.scanning = true;
     const scanBtn = document.getElementById("scanInboxBtn");
     const progress = document.getElementById("scanProgress");
-    const fill = document.getElementById("scanProgressFill");
-    const text = document.getElementById("scanProgressText");
-    const detail = document.getElementById("scanProgressDetail");
 
     if (scanBtn) scanBtn.disabled = true;
     if (progress) progress.classList.add("active");
-    if (fill) fill.style.width = "0%";
-    if (text) text.textContent = `Scanning 0 / ${state.currentMessageIds.length}`;
-    if (detail) detail.textContent = `Requested: ${state.currentMessageIds.length} · Analyzed: 0 · Failed: 0 · Skipped: 0`;
+    paintScanProgress(0, state.currentMessageIds.length,
+      `Requested: ${state.currentMessageIds.length} · Analyzed: 0 · Failed: 0 · Skipped: 0`);
 
     try {
       const data = await apiPost(`/api/scan?provider=${state.provider}`, {
@@ -540,14 +766,8 @@
         const scan = await apiGet(`/api/scan/${state.scanId}`);
         const total = scan.requested || 1;
         const done = scan.analyzed + scan.failed;
-        const pct = Math.min(100, Math.round((done / total) * 100));
-
-        const fill = document.getElementById("scanProgressFill");
-        const text = document.getElementById("scanProgressText");
-        const detail = document.getElementById("scanProgressDetail");
-        if (fill) fill.style.width = pct + "%";
-        if (text) text.textContent = `Scanning ${done} / ${total}`;
-        if (detail) detail.textContent = `Requested: ${scan.requested} · Analyzed: ${scan.analyzed} · Failed: ${scan.failed} · Skipped: ${scan.skipped}`;
+        paintScanProgress(done, total,
+          `Requested: ${scan.requested} · Analyzed: ${scan.analyzed} · Failed: ${scan.failed} · Skipped: ${scan.skipped}`);
 
         scan.results.forEach(r => { state.resultsByMessageId[r.message_id] = r; });
         renderInboxTable();
@@ -605,6 +825,90 @@
       : `<span style="color:${cssVar("--risk-critical-text")};">${escapeHtml(v)}</span>`;
   }
 
+  // ---------- structured links section (email modal)
+
+  const LINK_STATUS_BADGE = { malicious: "critical", suspicious: "medium", safe: "safe", unknown: "unknown" };
+  const LINK_STATUS_LABEL = { malicious: "Malicious", suspicious: "Suspicious", safe: "Safe", unknown: "Unknown" };
+  const LINKS_PAGE = 25;
+
+  function linksSectionHtml(model) {
+    const c = model.counts;
+    if (!c.total) return '<div style="color:var(--surface-muted);font-size:12.5px;">No links detected.</div>';
+    const flaggedSub = `${c.suspicious} suspicious · ${c.malicious} malicious`;
+    return `
+      <div class="link-summary">
+        <div class="link-stat"><span class="n">${c.total}</span><span class="l">Total links</span></div>
+        <div class="link-stat safe"><span class="n">${c.safe}</span><span class="l">Safe</span><span class="sub">no threat indicators</span></div>
+        <div class="link-stat flagged${c.malicious ? " has-malicious" : ""}"><span class="n">${c.flagged}</span><span class="l">Suspicious / bad</span><span class="sub">${flaggedSub}</span></div>
+        <div class="link-stat"><span class="n">${c.unknown}</span><span class="l">Unknown</span><span class="sub">not checked</span></div>
+      </div>
+      <div class="link-note">“Safe” means the local PhishTank feed and URL heuristics found nothing — not a guarantee. Links are shown as text and are never clickable.</div>
+      <button type="button" class="link-toggle" id="toggleLinksBtn" aria-expanded="false" aria-controls="linksList">Show links (${c.total})</button>
+      <div class="link-list" id="linksList" hidden></div>`;
+  }
+
+  function linkItemHtml(item, index) {
+    const evidence = [];
+    if (item.phishtank) evidence.push(`<span>PhishTank: ${item.phishtank.listed ? "KNOWN PHISHING" : "no match"}</span>`);
+    if (item.local) {
+      evidence.push(`<span>Heuristics: ${item.flags.length ? escapeHtml(item.flags.join(", ")) : "no flags"} (score ${item.score})</span>`);
+    }
+    if (!evidence.length) evidence.push("<span>No check result available for this link.</span>");
+    return `
+      <div class="link-item ${item.status}">
+        <div class="link-item-main">
+          <div class="link-item-text">
+            <div class="link-host">${ic("link")}<span class="host-text" title="${escapeHtml(item.host)}">${escapeHtml(item.host)}</span><span class="badge ${LINK_STATUS_BADGE[item.status]}">${LINK_STATUS_LABEL[item.status]}</span></div>
+            ${item.pathPreview ? `<div class="link-path" title="${escapeHtml(item.pathPreview)}">${escapeHtml(item.pathPreview)}</div>` : ""}
+          </div>
+          <button type="button" class="link-toggle small" data-link-idx="${index}" aria-expanded="false">Details</button>
+        </div>
+        <div class="link-details" hidden>
+          <code class="link-full">${escapeHtml(item.url)}</code>
+          <div class="link-evidence">${evidence.join("")}</div>
+        </div>
+      </div>`;
+  }
+
+  function wireLinksSection(root, model) {
+    const toggle = root.querySelector("#toggleLinksBtn");
+    const list = root.querySelector("#linksList");
+    if (!toggle || !list) return;
+    let shown = 0;
+
+    function renderMore() {
+      const next = model.items.slice(shown, shown + LINKS_PAGE);
+      const old = list.querySelector(".link-more");
+      if (old) old.remove();
+      list.insertAdjacentHTML("beforeend", next.map((item, i) => linkItemHtml(item, shown + i)).join(""));
+      shown += next.length;
+      if (shown < model.items.length) {
+        list.insertAdjacentHTML("beforeend",
+          `<button type="button" class="link-toggle link-more">Show ${Math.min(LINKS_PAGE, model.items.length - shown)} more (${model.items.length - shown} remaining)</button>`);
+        list.querySelector(".link-more").addEventListener("click", renderMore);
+      }
+      list.querySelectorAll("button[data-link-idx]").forEach(btn => {
+        if (btn._wired) return;
+        btn._wired = true;
+        btn.addEventListener("click", () => {
+          const details = btn.closest(".link-item").querySelector(".link-details");
+          const open = details.hidden;
+          details.hidden = !open;
+          btn.setAttribute("aria-expanded", String(open));
+          btn.textContent = open ? "Hide" : "Details";
+        });
+      });
+    }
+
+    toggle.addEventListener("click", () => {
+      const open = list.hidden;
+      if (open && shown === 0) renderMore();
+      list.hidden = !open;
+      toggle.setAttribute("aria-expanded", String(open));
+      toggle.textContent = open ? "Hide links" : `Show links (${model.counts.total})`;
+    });
+  }
+
   async function openEmailWorkspace(result) {
     // Re-fetch latest analysis if possible
     if (result && result.provider && result.account_id && result.message_id) {
@@ -638,8 +942,8 @@
 
     // User disposition
     const dispositionHtml = isTrusted
-      ? `<div class="disposition-box trusted"><strong>USER DISPOSITION:</strong> Trusted by user on ${escapeHtml(state.trustedSenders[sender].dateTrusted || "a previous session")}. This does not change the automated analysis below.</div>`
-      : `<div class="disposition-box none"><strong>USER DISPOSITION:</strong> None — treated per automated analysis.</div>`;
+      ? `<div class="disposition-box trusted">${ic("shield", "disposition-icon")}<div><span class="disposition-label">User disposition</span><span class="disposition-value">Trusted by user on ${escapeHtml(state.trustedSenders[sender].dateTrusted || "a previous session")}. This does not change the automated analysis below.</span></div></div>`
+      : `<div class="disposition-box none">${ic("shield", "disposition-icon")}<div><span class="disposition-label">User disposition</span><span class="disposition-value">None — treated per automated analysis.</span></div></div>`;
 
     // BEC section
     const becHtml = (bec.detected || (result.threat_types || []).some(t => t.toLowerCase().includes("bec")))
@@ -648,11 +952,12 @@
          ${bec.urgency_score != null ? `<div class="kv-row"><span class="k">Urgency score</span><span class="v">${bec.urgency_score}</span></div>` : ""}`
       : `<div style="color:var(--surface-muted);font-size:12.5px;">No BEC indicators found.</div>`;
 
-    // URL analysis
-    const urls = result.detected_urls || [];
-    const urlHtml = urls.length
-      ? urls.map(u => `<div class="link-card"><div class="link-card-top">${ic("link")} <span class="link-url">${escapeHtml(typeof u === "string" ? u : u.url || u)}</span></div></div>`).join("")
-      : `<div style="color:var(--surface-muted);font-size:12.5px;">No links detected.</div>`;
+    // URL analysis: structured summary + expandable list (see vp-links.js).
+    // BUG FIX: this used to read `result.detected_urls`, a field the
+    // backend never sets (it returns `urls`), so the section always said
+    // "No links detected" while the raw URLs leaked into Threat Intel rows.
+    const linkModel = (window.VPLinks || { buildLinkModel: () => ({ items: [], counts: { total: 0, safe: 0, suspicious: 0, malicious: 0, unknown: 0, flagged: 0 } }) }).buildLinkModel(result);
+    const urlHtml = linksSectionHtml(linkModel);
 
     // Attachments
     const attachments = result.attachments || [];
@@ -689,16 +994,27 @@
         : '<div style="color:var(--surface-muted);font-size:12.5px;">No origin IP could be extracted from the received headers.</div>';
     })();
 
-    // Threat Intel
+    // Threat Intel: per-source summary rows. The per-URL PhishTank / heuristic
+    // evidence is NOT dropped - it is attached to each link in the URL
+    // analysis section (expand a link's details to see it).
     const intelHtml = (() => {
       const rows = [];
-      (m3.phishtank || []).forEach(r => {
-        rows.push(`<div class="kv-row"><span class="k">PhishTank: ${escapeHtml(r.url || "")}</span><span class="v">${r.listed ? "KNOWN PHISHING" : "No match"}</span></div>`);
+      const pt = m3.phishtank || [];
+      const sh = m3.spamhaus || [];
+      const lh = (m3.local_heuristics || []);
+      if (pt.length) {
+        const listed = pt.filter(r => r.listed).length;
+        rows.push(`<div class="kv-row"><span class="k">PhishTank (local feed)</span><span class="v">${listed ? `${listed} of ${pt.length} URL${pt.length === 1 ? "" : "s"} KNOWN PHISHING` : `No match · ${pt.length} URL${pt.length === 1 ? "" : "s"} checked`}</span></div>`);
+      }
+      sh.forEach(r => {
+        rows.push(`<div class="kv-row"><span class="k">Spamhaus DROP: ${escapeHtml(r.ip || "")}</span><span class="v">${r.listed ? `LISTED (${escapeHtml(r.network || "")})` : "Not listed"}</span></div>`);
       });
-      (m3.spamhaus || []).forEach(r => {
-        rows.push(`<div class="kv-row"><span class="k">Spamhaus: ${escapeHtml(r.ip || "")}</span><span class="v">${r.listed ? `LISTED (${escapeHtml(r.network || "")})` : "Not listed"}</span></div>`);
-      });
+      if (lh.length) {
+        const flagged = lh.filter(r => (r.flags || []).length).length;
+        rows.push(`<div class="kv-row"><span class="k">Local heuristics</span><span class="v">${flagged} of ${lh.length} indicator${lh.length === 1 ? "" : "s"} flagged</span></div>`);
+      }
       if (!rows.length) return '<div style="color:var(--surface-muted);font-size:12.5px;">No indicators were available to check.</div>';
+      if (pt.length) rows.push('<div class="link-note" style="margin-top:6px;margin-bottom:0;">Per-link results are listed under URL analysis.</div>');
       return rows.join("");
     })();
 
@@ -820,6 +1136,8 @@
         <div id="scoreExplainBox" style="display:none;margin-top:10px;"></div>
       </div>
     `;
+
+    wireLinksSection(drawerBody, linkModel);
 
     // Risk calculation expand
     const explainBtn = document.getElementById("explainScoreBtn");
@@ -959,13 +1277,13 @@
     if (mailboxLine) {
       mailboxLine.textContent = state.provider
         ? `Connected · ${state.provider === "google" ? "Gmail" : "Microsoft"} · ${state.accountEmail}`
-        : "No mailbox connected";
+        : "Anonymous mode · not connected";
     }
 
     if (homeStats) {
       const totalScanned = Object.values(state.resultsByMessageId).filter(r => r.status && r.status !== "unscanned").length;
       homeStats.innerHTML = `
-        <div class="stat-card mailbox"><div class="label">Mailbox</div><div class="value" style="font-size:16px;">${state.provider ? (state.provider === "google" ? "Gmail" : "Microsoft") + " Connected" : "No mailbox connected"}</div><div class="sub">${totalScanned} emails scanned</div></div>
+        <div class="stat-card mailbox"><div class="label">Mailbox</div><div class="value" style="font-size:16px;">${state.provider ? (state.provider === "google" ? "Gmail" : "Microsoft") + " Connected" : "Not connected"}</div><div class="sub">${state.provider ? `${totalScanned} emails scanned` : "Sign in to scan a mailbox"}</div></div>
         <div class="stat-card" data-severity="safe"><div class="label">Safe</div><div class="value">${counts.LOW}</div><div class="sub">No action needed</div></div>
         <div class="stat-card medium" data-severity="medium"><div class="label">Medium Risk</div><div class="value">${counts.MEDIUM}</div><div class="sub">Review recommended</div></div>
         <div class="stat-card high" data-severity="high"><div class="label">High Risk</div><div class="value">${counts.HIGH}</div><div class="sub">Likely malicious</div></div>
@@ -980,7 +1298,9 @@
         .filter(r => r.risk && (r.risk.level === "HIGH" || r.risk.level === "CRITICAL"))
         .sort((a, b) => (b.risk.score || 0) - (a.risk.score || 0))
         .slice(0, 6);
-      detections.innerHTML = risky.length ? risky.map(r => {
+      detections.innerHTML = !state.provider
+        ? `<div class="anon-note"><div>Mailbox scanning is off while you are not signed in. <strong>Custom Mails</strong> still lets you upload and analyze .eml files locally.<br><button class="btn btn-primary btn-sm" id="homeSignInBtn">Sign in / Connect</button></div></div>`
+        : risky.length ? risky.map(r => {
         const email = r.email || {};
         const sev = severityClass(r.risk.level);
         return `<div class="detection-item" data-mid="${escapeHtml(r.message_id)}">
@@ -996,6 +1316,8 @@
           if (result) { setActiveView("inbox"); openEmailWorkspace(result); }
         });
       });
+      const homeSignIn = document.getElementById("homeSignInBtn");
+      if (homeSignIn) homeSignIn.addEventListener("click", openConnectModal);
     }
 
     // Recent activity
@@ -1013,6 +1335,46 @@
     }
 
     renderRefreshLabels();
+    if (state.provider) hydrateHomeFromBackend();
+  }
+
+  // The in-page result cache only knows what was scanned since this page
+  // loaded; the backend remembers every analysis for the session (SQLite).
+  // Use it so Home's counters and detections are correct after a reload or
+  // an OAuth round trip, instead of showing zeros for already-scanned mail.
+  let homeHydrateSeq = 0;
+  async function hydrateHomeFromBackend() {
+    const seq = ++homeHydrateSeq;
+    let summary, history;
+    try {
+      [summary, history] = await Promise.all([
+        apiGet("/api/reports/summary"),
+        apiGet("/api/scans/history"),
+      ]);
+    } catch (_) { return; }
+    if (seq !== homeHydrateSeq || state.activeView !== "home" || !state.provider) return;
+
+    const b = summary.risk_breakdown || {};
+    const set = (sel, v) => { const el = document.querySelector(sel + " .value"); if (el) el.textContent = v; };
+    set('.stat-card[data-severity="safe"]', b.LOW || 0);
+    set('.stat-card[data-severity="medium"]', b.MEDIUM || 0);
+    set('.stat-card[data-severity="high"]', b.HIGH || 0);
+    set('.stat-card[data-severity="critical"]', b.CRITICAL || 0);
+    const mailboxSub = document.querySelector(".stat-card.mailbox .sub");
+    if (mailboxSub) mailboxSub.textContent = `${summary.total_analyzed || 0} emails scanned`;
+
+    const detections = document.getElementById("recentDetections");
+    const items = (history.items || []).slice(0, 6);
+    if (detections && items.length && !detections.querySelector(".detection-item")) {
+      detections.innerHTML = items.map(i => {
+        const sev = severityClass((i.risk || {}).level);
+        return `<div class="detection-item" style="cursor:default;" data-hmid="${escapeHtml(i.message_id || "")}">
+          <span class="sev-dot ${sev}"></span>
+          <div style="flex-grow:1;min-width:0;"><div style="font-weight:600;overflow-wrap:anywhere;">${escapeHtml(i.sender || "—")}</div><div class="detection-subject">${escapeHtml(i.subject || "")}</div></div>
+          <span class="meta">${(i.risk || {}).score || "—"}/100</span>
+        </div>`;
+      }).join("");
+    }
   }
 
   // ============================================================
@@ -1064,23 +1426,10 @@
       });
     }
 
-    // Threat vectors (real)
     if (state.provider) {
-      try {
-        const intel = await apiGet("/api/threat-intel/summary");
-        const threatList = document.getElementById("threatVectorList");
-        if (threatList) {
-          threatList.innerHTML = intel.sources.map(s => `
-            <div class="threat-bar">
-              <span class="threat-bar-left">${ic(s.name.includes("PhishTank") ? "satellite" : s.name.includes("Spamhaus") ? "globe" : "warning", "threat-icon")}<span>${escapeHtml(s.name)}</span></span>
-              <span class="count">${s.matches} match${s.matches !== 1 ? "es" : ""}</span>
-            </div>
-          `).join("") || `<div class="threat-bar"><span class="threat-bar-left">${ic("shield", "threat-icon")}<span>No threats detected yet</span></span></div>`;
-        }
-      } catch (err) {
-        const threatList = document.getElementById("threatVectorList");
-        if (threatList) threatList.innerHTML = `<div style="color:var(--surface-muted);font-size:12.5px;">Failed to load threat data.</div>`;
-      }
+      // Threat vectors (real): categories ranked, intel sources separate
+      closeThreatDetail();
+      await loadThreatVectors();
 
       // Cases widget
       try {
@@ -1146,47 +1495,270 @@
     renderDashboardChart();
   }
 
-  function renderDashboardChart() {
-    if (typeof Chart === "undefined") return;
+  // ============================================================
+  // DASHBOARD: THREAT VECTORS (categories) + INTEL SOURCES
+  //
+  // "Top threat vectors" ranks threat CATEGORIES (Authentication
+  // Spoofing, Credential Phishing, ...). PhishTank / Spamhaus / local
+  // heuristics are evidence SOURCES, listed in their own section below the
+  // ranking. Every entry - category or source - is clickable and opens the
+  // same detail panel of real analyzed detections.
+  // ============================================================
+
+  const THREAT_ICONS = {
+    "Authentication Spoofing": "key",
+    "Malware Attachment": "paperclip",
+    "BEC / Financial Fraud": "dollar",
+    "Malicious Redirect": "route",
+    "Credential Phishing": "mail",
+    "Brand Impersonation": "flag",
+    "Threat Intelligence Match": "satellite",
+    "Suspicious Infrastructure": "globe",
+    "Spam": "warning",
+  };
+  const SOURCE_ICONS = { phishtank: "satellite", spamhaus: "globe", local_heuristics: "warning" };
+
+  function plural(n, one, many) { return `${n} ${n === 1 ? one : many}`; }
+
+  async function loadThreatVectors() {
+    const list = document.getElementById("threatVectorList");
+    if (!list) return;
+    try {
+      state.threatData = await apiGet("/api/dashboard/threat-vectors");
+      renderThreatVectorList();
+    } catch (err) {
+      state.threatData = null;
+      list.innerHTML = '<div class="threat-empty">Failed to load threat data.</div>';
+    }
+  }
+
+  function threatRowHtml(kind, key, icon, label, countText) {
+    return `<div class="threat-bar" role="button" tabindex="0" data-kind="${kind}" data-key="${escapeHtml(key)}" aria-label="${escapeHtml(label)}, ${escapeHtml(countText)}. Show detections">
+      <span class="threat-bar-left">${ic(icon, "threat-icon")}<span>${escapeHtml(label)}</span></span>
+      <span class="count">${escapeHtml(countText)}</span>
+    </div>`;
+  }
+
+  function renderThreatVectorList() {
+    const list = document.getElementById("threatVectorList");
+    const data = state.threatData;
+    if (!list || !data) return;
+
+    const vectorRows = (data.vectors || []).map(v =>
+      threatRowHtml("vector", v.name, THREAT_ICONS[v.name] || "shield", v.name, plural(v.count, "email", "emails"))
+    ).join("") || '<div class="threat-empty">No threat categories detected yet. Scan your inbox to populate this list.</div>';
+
+    const sourceRows = (data.sources || []).map(src =>
+      threatRowHtml("source", src.key, SOURCE_ICONS[src.key] || "shield", src.name, plural(src.matches, "match", "matches"))
+    ).join("");
+
+    list.innerHTML = vectorRows +
+      (sourceRows ? `<div class="threat-section-label">Threat intelligence sources</div>${sourceRows}` : "");
+
+    list.querySelectorAll(".threat-bar").forEach(row => {
+      const open = () => openThreatDetail(row.getAttribute("data-kind"), row.getAttribute("data-key"));
+      row.addEventListener("click", open);
+      row.addEventListener("keydown", e => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+      });
+    });
+  }
+
+  function findThreatEntry(kind, key) {
+    const data = state.threatData || {};
+    if (kind === "vector") return (data.vectors || []).find(v => v.name === key) || null;
+    return (data.sources || []).find(src => src.key === key) || null;
+  }
+
+  function openThreatDetail(kind, key) {
+    const entry = findThreatEntry(kind, key);
+    const detail = document.getElementById("threatDetailView");
+    const listView = document.getElementById("threatListView");
+    if (!entry || !detail || !listView) return;
+
+    const label = kind === "vector" ? entry.name : entry.name;
+    const dets = entry.detections || [];
+    const emailCount = kind === "vector" ? entry.count : entry.message_count;
+    const sevChips = kind === "vector"
+      ? ["critical", "high", "medium", "safe"].filter(k => (entry.severity || {})[k])
+          .map(k => `<span class="sev-chip ${k}">${entry.severity[k]} ${k === "safe" ? "SAFE" : k.toUpperCase()}</span>`).join("")
+      : "";
+    const countLine = kind === "vector"
+      ? `${plural(emailCount, "related detection", "related detections")}`
+      : `${plural(entry.matches, "match", "matches")} across ${plural(emailCount, "email", "emails")}`;
+
+    detail.innerHTML = `
+      <button type="button" class="threat-detail-back" id="threatBackBtn">${ic("chevron-left")} Back</button>
+      <div class="threat-detail-title">${escapeHtml(label)}</div>
+      <div class="threat-detail-count">${escapeHtml(countLine)}</div>
+      ${sevChips ? `<div class="threat-detail-sev">${sevChips}</div>` : ""}
+      <div class="threat-detail-list">
+        ${dets.length ? dets.map((d, i) => {
+          const sev = severityClass(d.risk_level);
+          const evidence = (d.evidence || []).length ? `<div class="evidence-line">${escapeHtml(d.evidence.join(" · "))}</div>` : "";
+          return `<div class="threat-email-row" role="button" tabindex="0" data-det="${i}">
+            <div class="sev-line"><span class="sev-chip ${sev}">${escapeHtml(severityLabel(d.risk_level))}${d.risk_score != null ? " · " + d.risk_score : ""}</span><span class="row-meta">${escapeHtml(d.date || "")}</span></div>
+            <div class="sender-name">${escapeHtml(d.sender || "—")}</div>
+            <div class="subject-line">${escapeHtml(d.subject || "(no subject)")}</div>
+            ${evidence}
+          </div>`;
+        }).join("") : '<div class="threat-empty">No analyzed emails matched.</div>'}
+        ${entry.truncated ? '<div class="threat-empty">Showing the highest-risk detections only.</div>' : ""}
+      </div>`;
+
+    listView.classList.remove("active");
+    detail.classList.add("active");
+    document.getElementById("threatBackBtn").addEventListener("click", closeThreatDetail);
+    detail.querySelectorAll(".threat-email-row").forEach(row => {
+      const open = () => openDetectionEmail(dets[parseInt(row.getAttribute("data-det"), 10)]);
+      row.addEventListener("click", open);
+      row.addEventListener("keydown", e => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+      });
+    });
+  }
+
+  function closeThreatDetail() {
+    const detail = document.getElementById("threatDetailView");
+    const listView = document.getElementById("threatListView");
+    if (detail) { detail.classList.remove("active"); detail.innerHTML = ""; }
+    if (listView) listView.classList.add("active");
+  }
+
+  // Open the full email analysis for a detection: use the full result this
+  // page already holds, otherwise fetch the stored analysis from
+  // /api/analysis/... (never render a partial stand-in).
+  async function openDetectionEmail(det) {
+    if (!det) return;
+    const cached = state.resultsByMessageId[det.message_id];
+    if (cached && cached.status === "analyzed" && cached.m1) { openEmailWorkspace(cached); return; }
+    try {
+      const full = await apiGet(
+        `/api/analysis/${encodeURIComponent(det.provider)}/${encodeURIComponent(det.account_id)}/${encodeURIComponent(det.message_id)}`
+      );
+      state.resultsByMessageId[full.message_id] = full;
+      openEmailWorkspace(full);
+    } catch (err) {
+      toast("Could not load the stored analysis: " + errText(err), "warning");
+    }
+  }
+
+  // ============================================================
+  // DASHBOARD: ANALYSIS REPORT CHART (real risk classifications)
+  //
+  // Data: GET /api/dashboard/risk-trend?period=day|week|month - counts of
+  // the session's actually analyzed mail by Safe / Medium / High /
+  // Critical. Zero-count periods are plotted as zero; nothing is
+  // fabricated. (The previous chart used /api/threat-geo/trend, which is
+  // geolocation analytics over suspicious mail only.)
+  // ============================================================
+
+  const CHART_PERIODS = { daily: "day", weekly: "week", monthly: "month" };
+  const CHART_X_TITLES = { day: "Day", week: "Week starting", month: "Month" };
+  const CHART_SERIES = [
+    { key: "safe", label: "Safe", cssVar: "--safe", fallback: "#00C4D3" },
+    { key: "medium", label: "Medium Risk", cssVar: "--warning", fallback: "#FFC107" },
+    { key: "high", label: "High Risk", cssVar: "--high", fallback: "#d39999" },
+    { key: "critical", label: "Critical", cssVar: "--danger", fallback: "#E81123" },
+  ];
+  let chartRequestSeq = 0;
+
+  function setChartEmpty(message) {
+    const el = document.getElementById("chartEmpty");
+    if (!el) return;
+    el.hidden = !message;
+    el.textContent = message || "";
+  }
+
+  function renderChartSummary(data) {
+    const el = document.getElementById("chartSummary");
+    if (!el) return;
+    const t = data.totals || {};
+    let line = `<strong>${t.total || 0}</strong> scanned · <strong>${t.safe || 0}</strong> safe · <strong>${t.medium || 0}</strong> medium · <strong>${t.high || 0}</strong> high · <strong>${t.critical || 0}</strong> critical`;
+    if (data.outside_window) line += ` · ${data.outside_window} older not shown`;
+    if (data.undated) line += ` · ${data.undated} undated`;
+    el.innerHTML = line;
+  }
+
+  async function renderDashboardChart() {
     const canvas = document.getElementById("analysisChart");
     if (!canvas) return;
+    const seq = ++chartRequestSeq;
 
-    // Destroy existing chart
-    if (canvas._chartInstance) {
-      canvas._chartInstance.destroy();
+    if (canvas._chartInstance) { canvas._chartInstance.destroy(); canvas._chartInstance = null; }
+    if (!state.provider) { setChartEmpty(""); return; }
+
+    const period = CHART_PERIODS[state.chartPeriod] || "day";
+    let data;
+    try {
+      data = await apiGet(`/api/dashboard/risk-trend?period=${period}`);
+    } catch (err) {
+      if (seq !== chartRequestSeq) return;
+      setChartEmpty("Could not load chart data: " + errText(err));
+      return;
     }
+    if (seq !== chartRequestSeq) return; // a newer request (e.g. another period click) superseded this one
 
-    if (!state.provider) return;
+    state.dashboardData = data;
+    renderChartSummary(data);
 
-    apiGet("/api/threat-geo/trend?period=day").then(data => {
-      const labels = data.trend.map(t => t.period);
-      const suspicious = data.trend.map(t => t.suspicious_count);
-      const critical = data.trend.map(t => t.critical_count);
-      const high = data.trend.map(t => t.high_count);
+    const total = (data.totals || {}).total || 0;
+    setChartEmpty(total ? "" : "No analyzed mail in this period yet. Scan your inbox to populate the chart.");
 
-      try {
-        canvas._chartInstance = new Chart(canvas, {
-          type: "line",
-          data: {
-            labels,
-            datasets: [
-              { label: "Suspicious", data: suspicious, borderColor: cssVar("--warning") || "#FFC107", tension: 0.3, fill: false },
-              { label: "High", data: high, borderColor: cssVar("--high") || "#d39999", tension: 0.3, fill: false },
-              { label: "Critical", data: critical, borderColor: cssVar("--danger") || "#E81123", tension: 0.3, fill: false },
-            ],
-          },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: { legend: { labels: { color: cssVar("--surface-text") || "#fff" } } },
-            scales: {
-              x: { ticks: { color: cssVar("--surface-muted") || "#888" } },
-              y: { ticks: { color: cssVar("--surface-muted") || "#888" }, beginAtZero: true },
+    if (typeof Chart === "undefined") {
+      setChartEmpty("Chart library could not be loaded (offline?). The counts above are still accurate.");
+      return;
+    }
+    if (canvas._chartInstance) canvas._chartInstance.destroy();
+
+    const text = cssVar("--surface-text") || "#fff";
+    const muted = cssVar("--surface-muted") || "#888";
+    const grid = cssVar("--surface-border") || "rgba(128,128,128,.25)";
+    const buckets = data.buckets || [];
+
+    try {
+      canvas._chartInstance = new Chart(canvas, {
+        type: "bar",
+        data: {
+          labels: buckets.map(b => b.label),
+          datasets: CHART_SERIES.map(series => ({
+            label: series.label,
+            data: buckets.map(b => b[series.key]),
+            backgroundColor: cssVar(series.cssVar) || series.fallback,
+            borderRadius: 3,
+            maxBarThickness: 38,
+          })),
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: "index", intersect: false },
+          plugins: {
+            legend: { position: "top", labels: { color: text, usePointStyle: true, boxWidth: 8, boxHeight: 8 } },
+            tooltip: {
+              callbacks: {
+                footer: items => `Total scanned: ${items.reduce((sum, it) => sum + it.parsed.y, 0)}`,
+              },
             },
           },
-        });
-      } catch (_) { /* Chart.js failure is non-fatal */ }
-    }).catch(() => {});
+          scales: {
+            x: {
+              stacked: true,
+              grid: { display: false },
+              ticks: { color: muted, maxRotation: 0, autoSkip: true },
+              title: { display: true, text: CHART_X_TITLES[period], color: muted },
+            },
+            y: {
+              stacked: true,
+              beginAtZero: true,
+              ticks: { color: muted, precision: 0 },
+              grid: { color: grid },
+              title: { display: true, text: "Emails", color: muted },
+            },
+          },
+        },
+      });
+    } catch (_) { /* Chart.js failure is non-fatal */ }
   }
 
   // ============================================================
@@ -1369,10 +1941,7 @@
       }).join("");
 
       accountsEl.querySelectorAll("[data-connect]").forEach(btn => {
-        btn.addEventListener("click", () => {
-          const id = btn.getAttribute("data-connect");
-          window.location.href = `/auth/${id === "google" ? "google" : "microsoft"}/login`;
-        });
+        btn.addEventListener("click", () => startOAuth(btn.getAttribute("data-connect")));
       });
       accountsEl.querySelectorAll("[data-disconnect]").forEach(btn => {
         btn.addEventListener("click", () => {
@@ -1381,6 +1950,13 @@
         });
       });
     }
+
+    const nameEl = document.getElementById("userViewName");
+    const emailEl = document.getElementById("userViewEmail");
+    const avatarEl = document.getElementById("userViewAvatar");
+    if (nameEl) nameEl.textContent = state.provider ? (PROVIDER_LABELS[state.provider] || state.provider) : "Not connected";
+    if (emailEl) emailEl.textContent = state.provider ? (state.accountEmail || "") : "Anonymous mode";
+    if (avatarEl) { avatarEl.src = DEFAULT_AVATAR; avatarEl.style.display = "block"; }
 
     // Trusted senders table
     const entries = Object.entries(state.trustedSenders);
@@ -1531,8 +2107,8 @@
       toast("Logout request failed: " + errText(err));
     }
 
-    // Client state reset
     if (state.scanPollHandle) clearInterval(state.scanPollHandle);
+    state.scanning = false;
     if (provider === state.provider) {
       state.provider = null;
       state.accountEmail = null;
@@ -1542,12 +2118,20 @@
       state.pageTokenStack = [null];
       state.currentPageIndex = 0;
       state.nextPageToken = null;
+      state.threatData = null;
+      state.dashboardData = null;
     }
+    closeDrawer();
+    closeThreatDetail();
 
     await refreshConnectionStatus();
-    renderInboxTable();
-    updateSummaryCards();
-    renderHome();
+    // Logging out lands in anonymous mode (not the first-launch welcome).
+    if (!state.provider) writeAuthChoice("skipped");
+    applyAuthPhase();
+    // Another provider may still be connected (user disconnected only one):
+    // make it the active mailbox and load it, as the original flow did.
+    if (state.provider && !state.currentMessageIds.length) await loadEmailPage(null, 0);
+    setActiveView(state.provider && MAILBOX_VIEWS.has(state.activeView) ? state.activeView : "home");
     toast("Logged out", "logout");
   }
 
@@ -1663,42 +2247,60 @@
   });
 
   // Dashboard pill navigation
+  //
+  // BUG FIX (initial active pill): the sliding indicator is positioned from
+  // offsetWidth/offsetLeft, which are 0 while the dashboard view is
+  // display:none - and it was measured once, 100ms after load, while the
+  // dashboard was hidden. So the first visit had a zero-width indicator and
+  // no selected state until another pill was clicked. Now the indicator is
+  // (re)measured whenever the dashboard becomes visible, on window resize
+  // and once web fonts settle; until it has a real measurement the active
+  // pill paints its own background (see .pill-nav-container:not(.ready)).
   const pillNav = document.getElementById("pillNav");
+  function updatePillIndicator() {
+    if (!pillNav) return;
+    const activeBtn = pillNav.querySelector(".pill-btn.active");
+    const pillIndicator = document.getElementById("pillIndicator");
+    if (!activeBtn || !pillIndicator || !activeBtn.offsetWidth) return; // hidden: try again when shown
+    const firstMeasure = !pillNav.classList.contains("ready");
+    if (firstMeasure) pillIndicator.style.transition = "none"; // no slide-in from 0: avoids a flash
+    pillIndicator.style.width = activeBtn.offsetWidth + "px";
+    pillIndicator.style.left = activeBtn.offsetLeft + "px";
+    if (firstMeasure) {
+      void pillIndicator.offsetWidth; // commit the un-animated position
+      pillIndicator.style.transition = "";
+      pillNav.classList.add("ready");
+    }
+  }
   if (pillNav) {
     const pillBtns = pillNav.querySelectorAll(".pill-btn");
-    const pillIndicator = document.getElementById("pillIndicator");
     const widgetContainer = document.getElementById("widgetContainer");
-
-    function updatePillIndicator(activeBtn) {
-      if (pillIndicator && activeBtn) {
-        pillIndicator.style.width = activeBtn.offsetWidth + "px";
-        pillIndicator.style.left = activeBtn.offsetLeft + "px";
-      }
-    }
-
     pillBtns.forEach(btn => {
       btn.addEventListener("click", () => {
         pillBtns.forEach(b => b.classList.remove("active"));
         btn.classList.add("active");
         const idx = parseInt(btn.getAttribute("data-index"), 10);
         if (widgetContainer) widgetContainer.style.transform = `translateX(-${idx * 100}%)`;
-        updatePillIndicator(btn);
+        updatePillIndicator();
       });
     });
-
-    // Initial pill indicator position
-    setTimeout(() => {
-      const activeBtn = pillNav.querySelector(".pill-btn.active");
-      if (activeBtn) updatePillIndicator(activeBtn);
-    }, 100);
+    window.addEventListener("resize", updatePillIndicator);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(updatePillIndicator);
+    if (typeof ResizeObserver !== "undefined") new ResizeObserver(updatePillIndicator).observe(pillNav);
   }
 
-  // Time toggle buttons for chart
+  // Time toggle buttons for chart: each one re-fetches REAL data for its period
   document.querySelectorAll(".time-btn").forEach(btn => {
     btn.addEventListener("click", () => {
-      document.querySelectorAll(".time-btn").forEach(b => b.classList.remove("active"));
-      btn.classList.add("active");
-      // Could re-fetch with different period but keeping simple
+      const period = btn.getAttribute("data-time");
+      document.querySelectorAll(".time-btn").forEach(b => {
+        const on = b === btn;
+        b.classList.toggle("active", on);
+        b.setAttribute("aria-pressed", String(on));
+      });
+      if (period === state.chartPeriod && state.dashboardData) return;
+      state.chartPeriod = period;
+      renderDashboardChart();
     });
   });
 
@@ -1718,7 +2320,6 @@
   // INIT — runs on every page load (including OAuth callback redirect)
   // ============================================================
 
-  setActiveView("home");
-  refreshConnectionStatus();
+  bootstrap();
 
 })();

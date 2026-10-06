@@ -9,11 +9,13 @@ import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Query
 from fastapi.responses import RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from backend.app.auth import google_oauth, microsoft_oauth
 from backend.app.auth.session import (
@@ -26,6 +28,7 @@ from backend.app.auth.session import (
 from backend.app.providers.gmail_provider import GmailProvider
 from backend.app.providers.microsoft_provider import MicrosoftGraphProvider
 from backend.app.services.analysis_service import analyze_eml_upload
+from backend.app.services.dashboard_stats import build_risk_trend, build_threat_vectors
 from backend.app.services.db import default_db_path
 from backend.app.services.mailbox_cache import MAILBOX_CACHE, MAILBOX_CACHE_TTL_SECONDS
 from backend.app.services.retention import run_retention_cleanup
@@ -74,6 +77,76 @@ async def health():
 
 
 # ============================================================
+# Auth status / login helpers
+# ============================================================
+
+def _canonical_login_redirect(request: Request, redirect_uri: str, login_path: str):
+    """
+    Keep the whole OAuth round trip on ONE origin.
+
+    The session cookie set by /auth/<provider>/login is host-scoped. The
+    provider sends the browser back to the host registered as the redirect
+    URI (``http://localhost:8000/...`` in .env.example). If the user started
+    the flow from a different host for the same server - e.g.
+    ``http://127.0.0.1:8000`` - the cookie lives on 127.0.0.1 but the
+    callback lands on localhost, which has no cookie: the token exchange
+    succeeds, yet the browser still looks signed out and the user has to log
+    in a second time. When the request host differs from the registered
+    redirect host, bounce to the canonical origin first so the cookie is set
+    where the callback will arrive. The ``_canon`` marker prevents a redirect
+    loop behind a proxy that rewrites the Host header.
+    """
+    if request.query_params.get("_canon"):
+        return None
+    try:
+        target = urlparse(redirect_uri)
+    except ValueError:
+        return None
+    if not target.scheme or not target.hostname:
+        return None
+
+    def _port(scheme: str, port: int | None) -> int:
+        return port or (443 if scheme == "https" else 80)
+
+    same_host = (request.url.hostname or "").lower() == target.hostname.lower()
+    same_port = _port(request.url.scheme, request.url.port) == _port(target.scheme, target.port)
+    if same_host and same_port:
+        return None
+    return RedirectResponse(f"{target.scheme}://{target.netloc}{login_path}?_canon=1")
+
+
+@app.get("/auth/status")
+async def auth_status(request: Request):
+    """
+    One-call snapshot of both providers for the frontend's startup logic:
+    which providers are configured on this server and which are connected
+    for this browser session. (The per-provider /auth/<p>/status endpoints
+    remain for backwards compatibility.)
+    """
+    session = get_session_data(request)
+    google_session = session.get("google")
+    ms_session = session.get("microsoft")
+
+    google = {
+        "configured": google_oauth.is_configured(),
+        "connected": bool(google_session),
+        "email": (google_session or {}).get("email"),
+    }
+    microsoft = {
+        "configured": microsoft_oauth.is_configured(),
+        "connected": bool(ms_session),
+        "email": (ms_session or {}).get("email"),
+    }
+    active = "google" if google["connected"] else ("microsoft" if microsoft["connected"] else None)
+    return {
+        "google": google,
+        "microsoft": microsoft,
+        "connected": active is not None,
+        "active_provider": active,
+    }
+
+
+# ============================================================
 # Google OAuth
 # ============================================================
 
@@ -88,6 +161,12 @@ def google_login(request: Request):
                 "GOOGLE_REDIRECT_URI (see .env.example)."
             ),
         )
+
+    canonical = _canonical_login_redirect(
+        request, google_oauth.REDIRECT_URI, "/auth/google/login"
+    )
+    if canonical is not None:
+        return canonical
 
     # BUG FIX (see MERGE_LOG.md): the cookie is now set directly on the
     # response we actually return, instead of on a throwaway Response
@@ -155,6 +234,12 @@ def microsoft_login(request: Request):
                 "(see .env.example)."
             ),
         )
+
+    canonical = _canonical_login_redirect(
+        request, microsoft_oauth.REDIRECT_URI, "/auth/microsoft/login"
+    )
+    if canonical is not None:
+        return canonical
 
     redirect = RedirectResponse("about:blank")
     session_id = get_or_create_session(request, redirect)
@@ -888,6 +973,40 @@ def threat_intel_summary(request: Request):
 
 
 # ============================================================
+# Dashboard: real risk-classification trend + threat vectors
+#
+# /api/dashboard/risk-trend feeds the "Analysis Report" chart from the
+# session's REAL analysis results (every classified message, not just
+# HIGH/CRITICAL, and not geolocation-gated), bucketed by day / week /
+# month into Safe / Medium / High / Critical counts. It deliberately does
+# NOT reuse /api/threat-geo/trend, which is geographic analytics over
+# suspicious mail only. See services/dashboard_stats.py.
+# ============================================================
+
+@app.get("/api/dashboard/risk-trend")
+def dashboard_risk_trend(
+    request: Request,
+    period: str = Query("day", pattern="^(day|week|month)$"),
+):
+    session_id = get_session_id(request)
+    if session_id is None:
+        raise HTTPException(status_code=401, detail="No active session.")
+
+    results = STORE.list_results(session_id=session_id)
+    return build_risk_trend(results, period=period)
+
+
+@app.get("/api/dashboard/threat-vectors")
+def dashboard_threat_vectors(request: Request):
+    session_id = get_session_id(request)
+    if session_id is None:
+        raise HTTPException(status_code=401, detail="No active session.")
+
+    results = STORE.list_results(session_id=session_id)
+    return build_threat_vectors(results)
+
+
+# ============================================================
 # Reports page
 # ============================================================
 
@@ -1165,13 +1284,55 @@ async def threat_geo_trend(
 
 # ============================================================
 # Static dashboard (served by this same FastAPI process)
+#
+# BUG FIX (logo / favicon 404s): the page references
+# /assets/valor-logo-full.png and /assets/valor-logo-mini.png, but
+# /assets was mounted on static/ only, so those URLs resolved to
+# static/valor-logo-*.png (which does not exist) while the real files
+# live in static/assets/. /assets now serves static/ first (styles.css,
+# app.js, icons.js - unchanged URLs) and falls back to static/assets/ for
+# anything not found there. The directory is also resolved from this
+# file's location instead of the process's working directory.
 # ============================================================
 
-STATIC_DIR = "static"
+STATIC_DIR = Path(__file__).resolve().parents[2] / "static"
+STATIC_ASSETS_DIR = STATIC_DIR / "assets"
 
-app.mount("/assets", StaticFiles(directory=STATIC_DIR), name="assets")
+
+class AssetsStaticFiles(StaticFiles):
+    """StaticFiles that retries a 404 against a secondary directory."""
+
+    def __init__(self, *, directory, fallback_directory=None, **kwargs):
+        super().__init__(directory=directory, **kwargs)
+        self._fallback = None
+        if fallback_directory is not None and Path(fallback_directory).is_dir():
+            self._fallback = StaticFiles(directory=str(fallback_directory))
+
+    async def get_response(self, path, scope):
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code != 404 or self._fallback is None:
+                raise
+            try:
+                return await self._fallback.get_response(path, scope)
+            except StarletteHTTPException:
+                raise exc
+
+
+app.mount(
+    "/assets",
+    AssetsStaticFiles(directory=str(STATIC_DIR), fallback_directory=STATIC_ASSETS_DIR),
+    name="assets",
+)
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    # Browsers request /favicon.ico regardless of <link rel="icon">.
+    return FileResponse(STATIC_ASSETS_DIR / "valor-logo-mini.png", media_type="image/png")
 
 
 @app.get("/")
 def dashboard_index():
-    return FileResponse(f"{STATIC_DIR}/index.html")
+    return FileResponse(STATIC_DIR / "index.html")
