@@ -1,9 +1,23 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="vp-booting">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ValorProtects Dashboard</title>
+<title>ValorProtects</title>
+<link rel="icon" type="image/png" href="/assets/valor-logo-mini.png">
+<link rel="apple-touch-icon" href="/assets/valor-logo-mini.png">
+<!-- Apply the saved theme BEFORE first paint so the shell never flashes the
+     default theme and then switches (part of the layout-stability fix). -->
+<script>
+(function () {
+  try {
+    var t = localStorage.getItem("vp_theme");
+    if (t && t !== "default") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) { /* storage unavailable: keep default theme */ }
+  // Never leave the page hidden if app.js fails to load/boot.
+  setTimeout(function () { document.documentElement.classList.remove("vp-booting"); }, 5000);
+})();
+</script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js" onerror="console.error('Failed to load Chart.js');"></script>
 <link rel="stylesheet" href="/assets/styles.css">
 </head>
@@ -12,25 +26,28 @@
 <div class="app-shell">
     <aside class="sidebar" id="sidebar">
         <div class="logo-container">
-            <img src="/assets/valor-logo-full.png" alt="ValorProtects" class="logo-full">
-            <img src="/assets/valor-logo-mini.png" alt="ValorProtects" class="logo-mini">
+            <img src="/assets/valor-logo-full.png" alt="ValorProtects" class="logo-full" width="420" height="154">
+            <img src="/assets/valor-logo-mini.png" alt="ValorProtects" class="logo-mini" width="160" height="160">
         </div>
         <button class="toggle-btn" id="toggleBtn"><i data-icon="chevron-left"></i></button>
 
         <ul class="nav-links">
-            <li data-view="home"><i data-icon="home"></i> <span class="text">Home</span></li>
-            <li data-view="inbox"><i data-icon="inbox"></i> <span class="text">Inbox</span></li>
-            <li class="active" data-view="dashboard"><i data-icon="chart-pie"></i> <span class="text">Dashboard</span></li>
-            <li data-view="reports"><i data-icon="chart-line"></i> <span class="text">Reports</span></li>
+            <li class="active" data-view="home"><i data-icon="home"></i> <span class="text">Home</span></li>
+            <li data-view="inbox" data-requires-mailbox="true"><i data-icon="inbox"></i> <span class="text">Inbox</span></li>
+            <li data-view="dashboard" data-requires-mailbox="true"><i data-icon="chart-pie"></i> <span class="text">Dashboard</span></li>
+            <li data-view="reports" data-requires-mailbox="true"><i data-icon="chart-line"></i> <span class="text">Reports</span></li>
             <li data-view="custom"><i data-icon="grid"></i> <span class="text">Custom Mails</span></li>
             <li data-view="user"><i data-icon="user"></i> <span class="text">User</span></li>
             <li data-view="settings" id="settingsNavItem"><i data-icon="gear"></i> <span class="text">Setting</span><span class="nav-update-dot" style="display:none;"></span></li>
-            <li class="logout" id="logoutBtn"><i data-icon="logout"></i> <span class="text">Log Out</span></li>
+            <li class="logout" id="logoutBtn" hidden><i data-icon="logout"></i> <span class="text">Log Out</span></li>
+            <li class="signin" id="signInBtn" hidden title="Sign in with Google or Microsoft"><i data-icon="plug"></i> <span class="text">Sign in / Connect</span></li>
         </ul>
 
         <div class="user-profile" id="userProfileShortcut">
-            <img id="userAvatar" src="" alt="User">
+            <img id="userAvatar" class="user-avatar" src="/assets/default-avatar.svg" alt="" width="40" height="40">
             <div class="user-info">
+                <strong id="userProfileName">&nbsp;</strong>
+                <span id="userProfileSub">&nbsp;</span>
             </div>
         </div>
     </aside>
@@ -38,7 +55,7 @@
     <main class="main-content" id="mainContent">
 
         <!-- ================= HOME VIEW ================= -->
-        <section class="view" id="view-home">
+        <section class="view active" id="view-home">
             <header class="header-top">
                 <div class="header-titles">
                     <h1>Home</h1>
@@ -89,7 +106,7 @@
             <header class="header-top">
                 <div class="header-titles">
                     <h1>Inbox</h1>
-                    <p id="inboxSubtitle">50 messages scanned</p>
+                    <p id="inboxSubtitle"></p>
                     <p id="inboxRefreshedLine" class="header-subline"></p>
                 </div>
                 <div class="search-container">
@@ -101,10 +118,13 @@
                 </div>
             </header>
 
-            <div class="scan-progress" id="scanProgress">
-                <div class="scan-progress-text" id="scanProgressText">Scanning 0 / 50</div>
+            <div class="scan-progress" id="scanProgress" role="status" aria-live="polite">
+                <div class="scan-progress-head">
+                    <span class="scan-progress-title" id="scanProgressText">Scanning 0 / 0</span>
+                    <span class="scan-progress-pct" id="scanProgressPct">0%</span>
+                </div>
                 <div class="scan-progress-bar"><div class="scan-progress-fill" id="scanProgressFill"></div></div>
-                <div class="scan-progress-text" id="scanProgressDetail">Requested: 0 · Analyzed: 0 · Failed: 0 · Skipped: 0</div>
+                <div class="scan-progress-detail" id="scanProgressDetail">Requested: 0 · Analyzed: 0 · Failed: 0 · Skipped: 0</div>
             </div>
 
             <div class="inbox-toolbar">
@@ -164,7 +184,7 @@
         </section>
 
         <!-- ================= DASHBOARD VIEW ================= -->
-        <section class="view active" id="view-dashboard">
+        <section class="view" id="view-dashboard">
             <header class="header-top">
                 <div class="header-titles">
                     <h1>Dashboard</h1>
@@ -195,14 +215,16 @@
                                 <div class="chart-header">
                                     <h3>Analysis Report</h3>
                                     <p class="chart-desc">Monitor the volume and threat classification of incoming emails across your selected timeframe.</p>
-                                    <div class="time-toggles">
-                                        <button class="time-btn" data-time="daily">Daily</button>
-                                        <button class="time-btn active" data-time="weekly">Weekly</button>
-                                        <button class="time-btn" data-time="monthly">Monthly</button>
+                                    <div class="time-toggles" role="group" aria-label="Chart period">
+                                        <button class="time-btn active" data-time="daily" aria-pressed="true">Daily</button>
+                                        <button class="time-btn" data-time="weekly" aria-pressed="false">Weekly</button>
+                                        <button class="time-btn" data-time="monthly" aria-pressed="false">Monthly</button>
                                     </div>
+                                    <div class="chart-summary" id="chartSummary" aria-live="polite"></div>
                                 </div>
-                                <div style="flex-grow:1; position:relative;">
-                                    <canvas id="analysisChart"></canvas>
+                                <div class="chart-canvas-wrap">
+                                    <canvas id="analysisChart" aria-label="Emails scanned by risk classification"></canvas>
+                                    <div class="chart-empty" id="chartEmpty" hidden></div>
                                 </div>
                             </div>
 
@@ -219,7 +241,7 @@
                     <div class="threat-panel-view active" id="threatListView">
                         <div class="threat-header-glass">
                             <h3>Top threat vectors</h3>
-                            <p>Identified exploitation techniques across inbound<br>critical events.</p>
+                            <p>Threat categories detected across your analyzed mail.</p>
                         </div>
                         <div id="threatVectorList"></div>
                     </div>
@@ -403,6 +425,18 @@
         </div>
     </div>
 
+    <!-- ================= WELCOME / AUTHENTICATION LANDING ================= -->
+    <div class="welcome-overlay" id="welcomeOverlay" hidden>
+        <div class="welcome-card" role="dialog" aria-modal="true" aria-labelledby="welcomeTitle">
+            <img src="/assets/valor-logo-full.png" alt="ValorProtects" class="welcome-logo" width="420" height="154">
+            <h1 id="welcomeTitle">Welcome to ValorProtects</h1>
+            <p class="welcome-lead">Local-first AI email threat detection. Connect a mailbox to scan your inbox, or skip and analyze individual .eml files.</p>
+            <div class="welcome-actions" id="welcomeProviderButtons"></div>
+            <button class="welcome-skip" id="welcomeSkipBtn" type="button">Skip for now</button>
+            <p class="welcome-note">Sign-in uses Google / Microsoft OAuth (read-only). Analysis runs on this device. Skipping keeps Custom Mails and Settings available, and you can connect any time.</p>
+        </div>
+    </div>
+
     <!-- ================= GENERIC MODAL ================= -->
     <div class="modal-overlay" id="modalOverlay">
         <div class="modal" id="modalBox"></div>
@@ -413,6 +447,7 @@
 </div>
 
 <script src="/assets/icons.js"></script>
+<script src="/assets/vp-links.js"></script>
 <script src="/assets/app.js"></script>
 </body>
 </html>
